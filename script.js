@@ -201,7 +201,18 @@ const wsProtocol = "wss";
 
         if (!username || !password) return customAlert("Введите логин и пароль");
 
-        fetch(`${API_URL}/api/login?user=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`, { method: 'POST' })
+        const data = {
+            username: username,
+            password: password
+        };
+
+        fetch(`${API_URL}/api/login`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        })
             .then(res => {
                 if (!res.ok) throw new Error("Неверный логин или пароль");
                 myUsername = username;

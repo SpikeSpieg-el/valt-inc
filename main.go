@@ -22,7 +22,16 @@ var (
 	db  *sql.DB
 	ctx = context.Background()
 	upgrader = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true }, // Настроить CORS!
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin: func(r *http.Request) bool {
+			// Разрешаем запросы с вашего домена на GitHub
+			origin := r.Header.Get("Origin")
+			if origin == "https://spikespieg-el.github.io" {
+				return true
+			}
+			return false // В целях безопасности лучше проверять конкретный домен
+		},
 	}
 )
 
@@ -60,9 +69,10 @@ func getEnv(key, defaultValue string) string {
 
 func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Origin", "https://spikespieg-el.github.io")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -91,7 +101,7 @@ func main() {
 	if err != nil { log.Fatal(err) }
 
 	// Эндпоинты
-	http.HandleFunc("/ws", corsMiddleware(handleConnections))
+	http.HandleFunc("/ws", handleConnections)
 	http.HandleFunc("/api/register", corsMiddleware(handleRegister))
 	http.HandleFunc("/api/login", corsMiddleware(handleLogin))
 	http.HandleFunc("/api/user", corsMiddleware(handleGetUser))
@@ -185,6 +195,38 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 
 // Вход пользователя
 func handleLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+
+	// Try to parse JSON body first
+	if r.Body != nil {
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err == nil && req.Username != "" {
+			// JSON body provided
+			username := req.Username
+			password := req.Password
+
+			var storedHash string
+			err := db.QueryRow("SELECT password_hash FROM users WHERE username = $1", username).Scan(&storedHash)
+			if err != nil {
+				http.Error(w, "User not found", http.StatusNotFound)
+				return
+			}
+
+			err = bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password))
+			if err != nil {
+				http.Error(w, "Invalid password", http.StatusUnauthorized)
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+	}
+
+	// Fallback to query parameters for backward compatibility
 	username := r.URL.Query().Get("user")
 	password := r.URL.Query().Get("password")
 
