@@ -102,6 +102,11 @@ const Chat = {
         document.getElementById('emptyChatState').classList.add('hidden');
         document.getElementById('activeChatArea').classList.remove('hidden');
 
+        // На мобильных скрываем сайдбар, чтобы показать чат
+        if (window.innerWidth <= 768) {
+            document.getElementById('sidebar').classList.add('mobile-hidden');
+        }
+
         UI.renderContacts();
         UI.refreshChatWindow();
     },
@@ -116,6 +121,19 @@ const Chat = {
     },
 
     async processPacket(packet) {
+        if (packet.type === 'profile_updated') {
+            if (State.contacts[packet.username]) {
+                State.contacts[packet.username].avatar = packet.avatar;
+                State.contacts[packet.username].displayName = packet.nickname || packet.username;
+                UI.renderContacts();
+                if (State.currentChatUser === packet.username) {
+                    document.getElementById('currentChatUser').innerText = packet.nickname || packet.username;
+                    document.getElementById('chatHeaderAvatar').src = packet.avatar || 'https://via.placeholder.com/40';
+                }
+            }
+            return;
+        }
+
         if (packet.type === 'contact_added') {
             UI.addContactToUI(packet.from, packet.publicKey, packet.avatar);
             return;

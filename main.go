@@ -307,6 +307,25 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Обновляем аватар во всех контактах, где этот пользователь является контактом
+	db.Exec("UPDATE contacts SET contact_avatar = $1 WHERE contact_username = $2", req.Avatar, req.Username)
+
+	// Уведомляем всех, у кого этот пользователь в контактах, об обновлении профиля
+	rows, _ := db.Query("SELECT user_username FROM contacts WHERE contact_username = $1", req.Username)
+	defer rows.Close()
+	for rows.Next() {
+		var contactOwner string
+		rows.Scan(&contactOwner)
+		notification := map[string]interface{}{
+			"type":     "profile_updated",
+			"username": req.Username,
+			"nickname": req.Nickname,
+			"avatar":   req.Avatar,
+		}
+		notifBytes, _ := json.Marshal(notification)
+		rdb.Publish(ctx, "user:"+contactOwner, string(notifBytes))
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -347,7 +366,7 @@ func handleContacts(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("user")
 
 	rows, err := db.Query(`
-		SELECT c.contact_username, c.contact_public_key, c.contact_avatar, u.nickname 
+		SELECT c.contact_username, c.contact_public_key, u.avatar, u.nickname 
 		FROM contacts c 
 		LEFT JOIN users u ON c.contact_username = u.username 
 		WHERE c.user_username = $1
@@ -419,10 +438,11 @@ func handleOfflineMessages(w http.ResponseWriter, r *http.Request) {
 // Получение истории сообщений
 func handleHistory(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("user")
-	
+
 	rows, err := db.Query("SELECT from_user, to_user, ciphertext, nonce FROM messages_history WHERE from_user = $1 OR to_user = $1 ORDER BY created_at ASC", username)
 	if err != nil {
-		http.Error(w, "Error", 500)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]MsgPacket{})
 		return
 	}
 	defer rows.Close()
@@ -433,9 +453,13 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 		rows.Scan(&m.From, &m.To, &m.Ciphertext, &m.Nonce)
 		msgs = append(msgs, m)
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(msgs)
+	if msgs == nil {
+		json.NewEncoder(w).Encode([]MsgPacket{})
+	} else {
+		json.NewEncoder(w).Encode(msgs)
+	}
 }
 
 // Обработка WebSocket
