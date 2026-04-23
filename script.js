@@ -273,11 +273,15 @@ async function performLogin() {
         if (Array.isArray(contacts)) contacts.forEach(c => UI.addContactToUI(c.username, c.public_key, c.avatar, c.nickname));
 
         // 2. Загружаем историю сообщений с сервера
-        const history = await API.request(`/api/history?user=${username}`);
-        if (Array.isArray(history)) {
-            for (const packet of history) {
-                await Chat.processPacket(packet);
+        try {
+            const history = await API.request(`/api/history?user=${username}`);
+            if (Array.isArray(history)) {
+                for (const packet of history) {
+                    await Chat.processPacket(packet);
+                }
             }
+        } catch (e) {
+            console.log("Нет истории сообщений или ошибка загрузки:", e);
         }
 
         // 3. Подключаем WebSocket
@@ -322,11 +326,15 @@ function sendEncryptedMessage(content) {
         nonce: encrypted.nonce
     };
 
-    if (!State.ws || State.ws.readyState !== WebSocket.OPEN) {
+    if (!State.ws || State.ws.readyState === WebSocket.CLOSED) {
         customAlert("Нет подключения к серверу. Попробуйте позже.");
         return;
     }
-    State.ws.send(JSON.stringify(packet));
+    if (State.ws.readyState === WebSocket.CONNECTING) {
+        State.ws.addEventListener('open', () => State.ws.send(JSON.stringify(packet)), { once: true });
+    } else {
+        State.ws.send(JSON.stringify(packet));
+    }
 
     // Сохраняем в историю и отображаем
     Chat.saveToHistory(State.currentChatUser, content, 'sent', State.myNickname);
