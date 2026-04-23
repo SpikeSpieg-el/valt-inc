@@ -129,7 +129,7 @@ const Chat = {
             // Нам нужен публичный ключ партнера для расшифровки
             if (!State.contacts[chatPartner]) {
                 const userData = await API.request(`/api/user?user=${chatPartner}`);
-                if (userData) UI.addContactToUI(userData.username, userData.public_key, userData.avatar);
+                if (userData) UI.addContactToUI(userData.username, userData.public_key, userData.avatar, userData.nickname);
             }
 
             const partner = State.contacts[chatPartner];
@@ -160,9 +160,9 @@ const UI = {
         document.getElementById(id).classList.remove('hidden');
     },
 
-    addContactToUI(username, pubkey, avatar) {
+    addContactToUI(username, pubkey, avatar, nickname = null) {
         if (username === State.myUsername) return;
-        State.contacts[username] = { publicKey: pubkey, avatar: avatar, displayName: username };
+        State.contacts[username] = { publicKey: pubkey, avatar: avatar, displayName: nickname || username };
         this.renderContacts();
     },
 
@@ -270,7 +270,7 @@ async function performLogin() {
 
         // 1. Загружаем контакты
         const contacts = await API.request(`/api/contacts?user=${username}`);
-        if (Array.isArray(contacts)) contacts.forEach(c => UI.addContactToUI(c.username, c.public_key, c.avatar));
+        if (Array.isArray(contacts)) contacts.forEach(c => UI.addContactToUI(c.username, c.public_key, c.avatar, c.nickname));
 
         // 2. Загружаем историю сообщений с сервера
         const history = await API.request(`/api/history?user=${username}`);
@@ -280,7 +280,20 @@ async function performLogin() {
             }
         }
 
+        // 3. Подключаем WebSocket
         connectWebSocket();
+
+        // 4. Загружаем офлайн-сообщения после подключения WS
+        try {
+            const offlineMsgs = await API.request(`/api/offline-messages?user=${username}`);
+            if (Array.isArray(offlineMsgs)) {
+                for (const packet of offlineMsgs) {
+                    await Chat.processPacket(packet);
+                }
+            }
+        } catch (e) {
+            console.log("Нет офлайн-сообщений или ошибка загрузки:", e);
+        }
     } catch (e) { customAlert("Ошибка входа"); }
 }
 
@@ -290,6 +303,10 @@ function connectWebSocket() {
     State.ws.onclose = () => setTimeout(connectWebSocket, 3000);
 }
 
+function showSidebar() {
+    document.getElementById('sidebar').classList.remove('mobile-hidden');
+}
+
 // Вынесем логику отправки в отдельную функцию, чтобы использовать её и для текста, и для файлов
 function sendEncryptedMessage(content) {
     if (!State.currentChatUser) return;
@@ -297,15 +314,15 @@ function sendEncryptedMessage(content) {
     const target = State.contacts[State.currentChatUser];
     const encrypted = Crypto.encrypt(content, target.publicKey, State.myKeys.secretKey);
 
-    const packet = { 
-        from: State.myUsername, 
-        to: State.currentChatUser, 
-        ciphertext: encrypted.ciphertext, 
-        nonce: encrypted.nonce 
+    const packet = {
+        from: State.myUsername,
+        to: State.currentChatUser,
+        ciphertext: encrypted.ciphertext,
+        nonce: encrypted.nonce
     };
-    
+
     State.ws.send(JSON.stringify(packet));
-    
+
     // Сохраняем в историю и отображаем
     Chat.saveToHistory(State.currentChatUser, content, 'sent', State.myNickname);
     UI.displayMessage(content, 'sent', State.myNickname);
@@ -315,7 +332,7 @@ function sendMessage() {
     const input = document.getElementById('msgText');
     const text = input.value.trim();
     if (!text) return;
-    
+
     sendEncryptedMessage(text);
     input.value = '';
 }
@@ -407,10 +424,22 @@ async function searchUser() {
                 </div>
             </div>
         `;
-        document.getElementById('foundUser').onclick = () => {
-            UI.addContactToUI(user.username, user.public_key, user.avatar);
+        document.getElementById('foundUser').onclick = async () => {
+            UI.addContactToUI(user.username, user.public_key, user.avatar, user.nickname);
             resultDiv.classList.add('hidden');
             document.getElementById('searchKey').value = '';
+            
+            // Сохраняем контакт на сервере
+            try {
+                await API.request('/api/add-contact', 'POST', {
+                    user_username: State.myUsername,
+                    contact_username: user.username,
+                    contact_public_key: user.public_key,
+                    contact_avatar: user.avatar
+                });
+            } catch (e) {
+                console.log("Ошибка сохранения контакта на сервере:", e);
+            }
         };
     } catch (e) {
         customAlert("Пользователь не найден");
@@ -558,3 +587,4 @@ window.openEditProfileModal = openEditProfileModal;
 window.closeEditProfileModal = closeEditProfileModal;
 window.processEditAvatar = processEditAvatar;
 window.saveProfileChanges = saveProfileChanges;
+window.showSidebar = showSidebar;

@@ -25,12 +25,12 @@ var (
 		ReadBufferSize:  1024 * 10,
 		WriteBufferSize: 1024 * 10,
 		CheckOrigin: func(r *http.Request) bool {
-			// Разрешаем запросы с вашего домена на GitHub
 			origin := r.Header.Get("Origin")
-			if origin == "https://spikespieg-el.github.io" {
+			// Разрешаем запросы с обоих доменов
+			if origin == "https://spikespieg-el.github.io" || origin == "https://vault-inc.duckdns.org" {
 				return true
 			}
-			return false // В целях безопасности лучше проверять конкретный домен
+			return false
 		},
 	}
 )
@@ -70,7 +70,10 @@ func getEnv(key, defaultValue string) string {
 
 func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "https://spikespieg-el.github.io")
+		origin := r.Header.Get("Origin")
+		if origin == "https://spikespieg-el.github.io" || origin == "https://vault-inc.duckdns.org" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -185,7 +188,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	uniqueKey := generateUniqueKey()
 
-	_, err = db.Exec("INSERT INTO users (username, password_hash, public_key, avatar, unique_user_key, encrypted_private_key) VALUES ($1, $2, $3, $4, $5, $6)", username, hash, pubKey, avatar, uniqueKey, "")
+	_, err = db.Exec("INSERT INTO users (username, password_hash, public_key, avatar, unique_user_key, nickname, encrypted_private_key) VALUES ($1, $2, $3, $4, $5, $6, $7)", username, hash, pubKey, avatar, uniqueKey, "", "")
 	if err != nil {
 		log.Printf("Error inserting user: %v", err)
 		http.Error(w, "Error registering user", http.StatusInternalServerError)
