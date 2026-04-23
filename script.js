@@ -71,8 +71,15 @@ const API = {
     async request(path, method = 'GET', body = null) {
         const options = { method, headers: { 'Content-Type': 'application/json' } };
         if (body) options.body = JSON.stringify(body);
+        console.log(`API Request: ${method} ${State.API_URL}${path}`, body ? body : '');
         const response = await fetch(`${State.API_URL}${path}`, options);
-        return response.ok ? response.json() : [];
+        console.log(`API Response status: ${response.status} ${response.statusText}`);
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`API Error: ${response.status} - ${errorText}`);
+            throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
+        }
+        return response.json();
     }
 };
 
@@ -272,12 +279,14 @@ async function register() {
     if (!username || !password) return customAlert("Заполните все поля");
 
     try {
+        console.log("Начало регистрации для пользователя:", username);
         const keys = nacl.box.keyPair();
         const pubKeyB64 = Crypto.toBase64(keys.publicKey);
         const privKeyB64 = Crypto.toBase64(keys.secretKey);
 
         // Шифруем приватный ключ паролем
         const encryptedPrivKey = await Crypto.encryptPrivateKey(privKeyB64, password);
+        console.log("Ключи сгенерированы и зашифрованы");
 
         const res = await API.request('/api/register', 'POST', {
             username: username,
@@ -287,16 +296,18 @@ async function register() {
             nickname: "",
             encrypted_private_key: encryptedPrivKey
         });
+        console.log("Ответ сервера:", res);
 
         State.myUsername = username;
         State.myUniqueKey = res.unique_key;
         State.myKeys = keys;
-        
+
         localStorage.setItem(`privateKey_${username}`, privKeyB64);
-        
+
         UI.showScreen('profileSetupForm');
     } catch (e) {
-        customAlert("Ошибка регистрации");
+        console.error("Ошибка регистрации:", e);
+        customAlert("Ошибка регистрации: " + (e.message || "Неизвестная ошибка"));
     }
 }
 
