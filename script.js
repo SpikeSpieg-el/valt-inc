@@ -1,5 +1,5 @@
-const API_URL = "https://vault-inc.duckdns.org:3005";
-const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+const API_URL = "http://vault-inc.duckdns.org:3005";
+const wsProtocol = "ws";
     
     let myKeys, myUsername, myUniqueKey, ws;
     let myNickname = "";
