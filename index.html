@@ -37,6 +37,9 @@
         <label style="font-size: 13px; color: gray; margin-bottom: 4px; display:block;">Аватар (опционально)</label>
         <input type="file" id="setupAvatarFile" accept="image/*" onchange="processSetupAvatar(event)">
     </div>
+    <div class="avatar-preview-container" id="setupAvatarPreviewContainer" style="display:none; text-align:center; margin: 10px 0;">
+        <img id="setupAvatarPreview" class="profile-avatar" src="" alt="Preview" style="width: 80px; height: 80px; border-radius: 50%;">
+    </div>
     <button onclick="completeProfileSetup()">Сохранить и войти</button>
 </div>
 
@@ -47,8 +50,8 @@
     <div id="sidebar" class="sidebar">
         <div class="sidebar-header">
             <div class="profile-info">
-                <img id="myAvatarDisplay" class="profile-avatar" src="" style="display:none;" alt="Me">
-                <div id="myAvatarText" class="profile-avatar">U</div>
+                <img id="myAvatarDisplay" class="profile-avatar" src="" style="display:none; cursor: pointer;" alt="Me" onclick="openEditProfileModal()">
+                <div id="myAvatarText" class="profile-avatar" style="cursor: pointer;" onclick="openEditProfileModal()">U</div>
                 <div class="profile-details">
                     <h3 id="displayUser">Username</h3>
                     <p onclick="copyKey()" title="Нажмите, чтобы скопировать ключ">
@@ -85,6 +88,14 @@
             </div>
             <div class="messages-container" id="messages"></div>
             <div class="input-area">
+                <!-- Скрытый инпут для выбора файла -->
+                <input type="file" id="fileInput" style="display: none;" onchange="handleFileSelect(event)">
+                
+                <!-- Кнопка скрепки -->
+                <button class="attach-btn" onclick="document.getElementById('fileInput').click()">
+                    <i class="fas fa-paperclip"></i>
+                </button>
+
                 <input type="text" id="msgText" placeholder="Написать сообщение..." onkeypress="if(event.key === 'Enter') sendMessage()">
                 <button class="send-btn" onclick="sendMessage()"><i class="fas fa-paper-plane"></i></button>
             </div>
@@ -98,6 +109,26 @@
         <div class="alert-icon"><i class="fas fa-info-circle"></i></div>
         <div class="alert-message" id="alertMessage"></div>
         <button class="alert-btn" onclick="closeCustomAlert()">OK</button>
+    </div>
+</div>
+
+<!-- Edit Profile Modal -->
+<div id="editProfileModal" class="custom-alert hidden">
+    <div class="alert-content" style="max-width: 400px;">
+        <div class="alert-icon"><i class="fas fa-user-edit"></i></div>
+        <h3 style="margin: 0 0 15px 0;">Редактировать профиль</h3>
+        <div class="input-group"><input type="text" id="editNickname" placeholder="Ваш ник"></div>
+        <div class="input-group">
+            <label style="font-size: 13px; color: gray; margin-bottom: 4px; display:block;">Аватар</label>
+            <input type="file" id="editAvatarFile" accept="image/*" onchange="processEditAvatar(event)">
+        </div>
+        <div class="avatar-preview-container" id="editAvatarPreviewContainer" style="display:none; text-align:center; margin: 10px 0;">
+            <img id="editAvatarPreview" class="profile-avatar" src="" alt="Preview" style="width: 80px; height: 80px; border-radius: 50%;">
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: center; margin-top: 15px;">
+            <button class="alert-btn" onclick="closeEditProfileModal()" style="background: #666;">Отмена</button>
+            <button class="alert-btn" onclick="saveProfileChanges()">Сохранить</button>
+        </div>
     </div>
 </div>
 

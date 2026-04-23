@@ -71,15 +71,21 @@ const API = {
     async request(path, method = 'GET', body = null) {
         const options = { method, headers: { 'Content-Type': 'application/json' } };
         if (body) options.body = JSON.stringify(body);
-        console.log(`API Request: ${method} ${State.API_URL}${path}`, body ? body : '');
+        
+        console.log(`API Request: ${method} ${State.API_URL}${path}`);
         const response = await fetch(`${State.API_URL}${path}`, options);
-        console.log(`API Response status: ${response.status} ${response.statusText}`);
+        
         if (!response.ok) {
             const errorText = await response.text();
-            console.error(`API Error: ${response.status} - ${errorText}`);
-            throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
         }
-        return response.json();
+
+        // ПРОВЕРКА: Если контента нет, не вызываем .json()
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+            return response.json();
+        }
+        return {}; // Возвращаем пустой объект, если это не JSON
     }
 };
 
@@ -176,7 +182,36 @@ const UI = {
         const messagesDiv = document.getElementById('messages');
         const msgDiv = document.createElement('div');
         msgDiv.className = `message ${type}`;
-        msgDiv.innerHTML = type === 'received' ? `<div class="msg-sender">${senderName}</div>${text}` : text;
+        
+        let contentHTML = "";
+
+        // Проверяем, является ли сообщение файлом
+        if (text.startsWith("FILE:")) {
+            const fileInfo = text.replace("FILE:", "");
+            const [fileName, fileData] = fileInfo.split("|");
+
+            if (fileData.startsWith("data:image/")) {
+                // Если это картинка — показываем превью
+                contentHTML = `
+                    <div class="file-msg">
+                        <img src="${fileData}" class="chat-image" onclick="window.open('${fileData}')">
+                        <br><small>${fileName}</small>
+                    </div>`;
+            } else {
+                // Если другой файл — показываем ссылку на скачивание
+                contentHTML = `
+                    <div class="file-msg">
+                        <i class="fas fa-file-download"></i>
+                        <a href="${fileData}" download="${fileName}">${fileName}</a>
+                    </div>`;
+            }
+        } else {
+            // Обычный текст
+            contentHTML = text;
+        }
+
+        msgDiv.innerHTML = type === 'received' ? `<div class="msg-sender">${senderName}</div>${contentHTML}` : contentHTML;
+        
         messagesDiv.appendChild(msgDiv);
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
     },
@@ -221,9 +256,17 @@ async function performLogin() {
         }
 
         State.myKeys = { publicKey: Crypto.fromBase64(userData.public_key), secretKey: Crypto.fromBase64(privKeyB64) };
+        State.myAvatarBase64 = userData.avatar || "";
 
         UI.showScreen('chatInterface');
         document.getElementById('displayUser').innerText = State.myNickname;
+        
+        // Обновляем аватар в сайдбаре
+        if (State.myAvatarBase64) {
+            document.getElementById('myAvatarDisplay').src = State.myAvatarBase64;
+            document.getElementById('myAvatarDisplay').style.display = 'block';
+            document.getElementById('myAvatarText').style.display = 'none';
+        }
 
         // 1. Загружаем контакты
         const contacts = await API.request(`/api/contacts?user=${username}`);
@@ -247,19 +290,33 @@ function connectWebSocket() {
     State.ws.onclose = () => setTimeout(connectWebSocket, 3000);
 }
 
+// Вынесем логику отправки в отдельную функцию, чтобы использовать её и для текста, и для файлов
+function sendEncryptedMessage(content) {
+    if (!State.currentChatUser) return;
+
+    const target = State.contacts[State.currentChatUser];
+    const encrypted = Crypto.encrypt(content, target.publicKey, State.myKeys.secretKey);
+
+    const packet = { 
+        from: State.myUsername, 
+        to: State.currentChatUser, 
+        ciphertext: encrypted.ciphertext, 
+        nonce: encrypted.nonce 
+    };
+    
+    State.ws.send(JSON.stringify(packet));
+    
+    // Сохраняем в историю и отображаем
+    Chat.saveToHistory(State.currentChatUser, content, 'sent', State.myNickname);
+    UI.displayMessage(content, 'sent', State.myNickname);
+}
+
 function sendMessage() {
     const input = document.getElementById('msgText');
     const text = input.value.trim();
-    if (!text || !State.currentChatUser) return;
-
-    const target = State.contacts[State.currentChatUser];
-    const encrypted = Crypto.encrypt(text, target.publicKey, State.myKeys.secretKey);
-
-    const packet = { from: State.myUsername, to: State.currentChatUser, ciphertext: encrypted.ciphertext, nonce: encrypted.nonce };
-    State.ws.send(JSON.stringify(packet));
+    if (!text) return;
     
-    Chat.saveToHistory(State.currentChatUser, text, 'sent', State.myNickname);
-    UI.displayMessage(text, 'sent', State.myNickname);
+    sendEncryptedMessage(text);
     input.value = '';
 }
 
@@ -373,9 +430,38 @@ function processSetupAvatar(event) {
             const ctx = canvas.getContext('2d');
             ctx.drawImage(img, 0, 0, 64, 64);
             State.myAvatarBase64 = canvas.toDataURL('image/jpeg', 0.6);
+            
+            // Показываем превью
+            const preview = document.getElementById('setupAvatarPreview');
+            const container = document.getElementById('setupAvatarPreviewContainer');
+            preview.src = State.myAvatarBase64;
+            container.style.display = 'block';
         }
         img.src = e.target.result;
     }
+    reader.readAsDataURL(file);
+}
+
+// Обработка прикрепления файла
+async function handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // Ограничение размера (например, 5МБ), так как Base64 увеличивает размер на 33%
+    if (file.size > 5 * 1024 * 1024) {
+        return customAlert("Файл слишком большой. Максимум 5МБ.");
+    }
+
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+        const base64Data = e.target.result; // Это строка вида "data:image/png;base64,..."
+        const fileName = file.name;
+        
+        // Формируем структуру: ИмяФайла|Тип|Данные
+        const payload = `FILE:${fileName}|${base64Data}`;
+        
+        sendEncryptedMessage(payload);
+    };
     reader.readAsDataURL(file);
 }
 
@@ -397,9 +483,78 @@ document.addEventListener('DOMContentLoaded', () => {
     if (icon) icon.className = savedTheme === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
 });
 
+// Функции редактирования профиля
+function openEditProfileModal() {
+    document.getElementById('editNickname').value = State.myNickname;
+    document.getElementById('editAvatarPreviewContainer').style.display = 'none';
+    document.getElementById('editProfileModal').classList.remove('hidden');
+}
+
+function closeEditProfileModal() {
+    document.getElementById('editProfileModal').classList.add('hidden');
+    document.getElementById('editAvatarFile').value = '';
+}
+
+function processEditAvatar(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const img = new Image();
+        img.onload = function() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, 64, 64);
+            State.myAvatarBase64 = canvas.toDataURL('image/jpeg', 0.6);
+            
+            // Показываем превью
+            const preview = document.getElementById('editAvatarPreview');
+            const container = document.getElementById('editAvatarPreviewContainer');
+            preview.src = State.myAvatarBase64;
+            container.style.display = 'block';
+        }
+        img.src = e.target.result;
+    }
+    reader.readAsDataURL(file);
+}
+
+async function saveProfileChanges() {
+    const nickname = document.getElementById('editNickname').value;
+    if (!nickname) return customAlert("Введите ник");
+
+    try {
+        await API.request('/api/update-profile', 'POST', {
+            username: State.myUsername,
+            nickname: nickname,
+            avatar: State.myAvatarBase64
+        });
+        
+        State.myNickname = nickname;
+        document.getElementById('displayUser').innerText = State.myNickname;
+        
+        // Обновляем аватар в сайдбаре
+        if (State.myAvatarBase64) {
+            document.getElementById('myAvatarDisplay').src = State.myAvatarBase64;
+            document.getElementById('myAvatarDisplay').style.display = 'block';
+            document.getElementById('myAvatarText').style.display = 'none';
+        }
+        
+        closeEditProfileModal();
+        customAlert("Профиль обновлен");
+    } catch (e) {
+        customAlert("Ошибка обновления профиля");
+    }
+}
+
 // Экспорт дополнительных функций
 window.register = register;
 window.completeProfileSetup = completeProfileSetup;
 window.searchUser = searchUser;
 window.toggleTheme = toggleTheme;
 window.processSetupAvatar = processSetupAvatar;
+window.handleFileSelect = handleFileSelect;
+window.openEditProfileModal = openEditProfileModal;
+window.closeEditProfileModal = closeEditProfileModal;
+window.processEditAvatar = processEditAvatar;
+window.saveProfileChanges = saveProfileChanges;

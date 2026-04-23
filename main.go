@@ -22,8 +22,8 @@ var (
 	db  *sql.DB
 	ctx = context.Background()
 	upgrader = websocket.Upgrader{
-		ReadBufferSize:  1024,
-		WriteBufferSize: 1024,
+		ReadBufferSize:  1024 * 10,
+		WriteBufferSize: 1024 * 10,
 		CheckOrigin: func(r *http.Request) bool {
 			// Разрешаем запросы с вашего домена на GitHub
 			origin := r.Header.Get("Origin")
@@ -224,7 +224,9 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 			return
 		}
 	}
@@ -246,7 +248,65 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// Добавление контакта
+func handleAddContact(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserUsername      string `json:"user_username"`
+		ContactUsername   string `json:"contact_username"`
+		ContactPublicKey  string `json:"contact_public_key"`
+		ContactAvatar     string `json:"contact_avatar"`
+	}
+
+	if r.Body != nil {
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+	}
+
+	_, err := db.Exec("INSERT INTO contacts (user_username, contact_username, contact_public_key, contact_avatar) VALUES ($1, $2, $3, $4) ON CONFLICT (user_username, contact_username) DO NOTHING",
+		req.UserUsername, req.ContactUsername, req.ContactPublicKey, req.ContactAvatar)
+	if err != nil {
+		http.Error(w, "Error adding contact", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// Обновление профиля (ник и аватар)
+func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		Nickname string `json:"nickname"`
+		Avatar   string `json:"avatar"`
+	}
+
+	if r.Body != nil {
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+	}
+
+	_, err := db.Exec("UPDATE users SET nickname = $1, avatar = $2 WHERE username = $3", req.Nickname, req.Avatar, req.Username)
+	if err != nil {
+		http.Error(w, "Error updating profile", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // Получение информации о пользователе по логину
@@ -316,33 +376,6 @@ func handleContacts(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(contacts)
 }
 
-// Добавление контакта
-func handleAddContact(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		UserUsername      string `json:"user_username"`
-		ContactUsername   string `json:"contact_username"`
-		ContactPublicKey  string `json:"contact_public_key"`
-		ContactAvatar     string `json:"contact_avatar"`
-	}
-
-	if r.Body != nil {
-		err := json.NewDecoder(r.Body).Decode(&req)
-		if err != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
-			return
-		}
-	}
-
-	_, err := db.Exec("INSERT INTO contacts (user_username, contact_username, contact_public_key, contact_avatar) VALUES ($1, $2, $3, $4) ON CONFLICT (user_username, contact_username) DO NOTHING",
-		req.UserUsername, req.ContactUsername, req.ContactPublicKey, req.ContactAvatar)
-	if err != nil {
-		http.Error(w, "Error adding contact", http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
 // Получение и удаление офлайн-сообщений
 func handleOfflineMessages(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("user")
@@ -378,31 +411,6 @@ func handleOfflineMessages(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(messages)
-}
-
-// Обновление профиля (ник и аватар)
-func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Username string `json:"username"`
-		Nickname string `json:"nickname"`
-		Avatar   string `json:"avatar"`
-	}
-
-	if r.Body != nil {
-		err := json.NewDecoder(r.Body).Decode(&req)
-		if err != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
-			return
-		}
-	}
-
-	_, err := db.Exec("UPDATE users SET nickname = $1, avatar = $2 WHERE username = $3", req.Nickname, req.Avatar, req.Username)
-	if err != nil {
-		http.Error(w, "Error updating profile", http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
 }
 
 // Получение истории сообщений
