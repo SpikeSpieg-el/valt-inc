@@ -114,6 +114,7 @@ func main() {
 	http.HandleFunc("/api/offline-messages", corsMiddleware(handleOfflineMessages))
 	http.HandleFunc("/api/update-profile", corsMiddleware(handleUpdateProfile))
 	http.HandleFunc("/api/history", corsMiddleware(handleHistory))
+	http.HandleFunc("/api/online-status", corsMiddleware(handleOnlineStatus))
 
 	log.Println("🚀 Full E2EE Server started on :3005")
 	log.Fatal(http.ListenAndServe(":3005", nil))
@@ -366,6 +367,23 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(msgs)
 }
 
+func handleOnlineStatus(w http.ResponseWriter, r *http.Request) {
+	username := r.URL.Query().Get("user")
+	rows, _ := db.Query("SELECT contact_username FROM contacts WHERE user_username = $1", username)
+	defer rows.Close()
+
+	onlineUsers := []string{}
+	for rows.Next() {
+		var contact string
+		rows.Scan(&contact)
+		exists, _ := rdb.Exists(ctx, "online:"+contact).Result()
+		if exists > 0 {
+			onlineUsers = append(onlineUsers, contact)
+		}
+	}
+	json.NewEncoder(w).Encode(onlineUsers)
+}
+
 func handleConnections(w http.ResponseWriter, r *http.Request) {
 	user := r.URL.Query().Get("user")
 	ws, err := upgrader.Upgrade(w, r, nil)
@@ -376,6 +394,10 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	defer ws.Close()
 
 	log.Printf("🔌 WS connected: %s", user)
+
+	// Set online status
+	rdb.Set(ctx, "online:"+user, "1", 0)
+	defer rdb.Del(ctx, "online:"+user)
 
 	pubsub := rdb.Subscribe(ctx, "user:"+user)
 	defer pubsub.Close()
@@ -394,6 +416,16 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 
 		var p MsgPacket
 		if err := json.Unmarshal(msg, &p); err != nil { continue }
+
+		// Handle typing notifications
+		if p.Type == "typing" {
+			typingNotif, _ := json.Marshal(map[string]interface{}{
+				"type": "typing",
+				"from": p.From,
+			})
+			rdb.Publish(ctx, "user:"+p.To, string(typingNotif))
+			continue
+		}
 
 		pBytes, _ := json.Marshal(p)
 		
