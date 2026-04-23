@@ -1,5 +1,5 @@
-const API_URL = "http://vault-inc.duckdns.org:3005";
-const wsProtocol = "ws";
+const API_URL = "https://vault-inc.duckdns.org:3005";
+const wsProtocol = "wss";
     
     let myKeys, myUsername, myUniqueKey, ws;
     let myNickname = "";
@@ -7,6 +7,19 @@ const wsProtocol = "ws";
     let contacts = {};
     let currentChatUser = null;
     let userPublicKeys = {};
+
+    // --- Custom Alert ---
+    function customAlert(message) {
+        const alertModal = document.getElementById('customAlert');
+        const alertMessage = document.getElementById('alertMessage');
+        alertMessage.textContent = message;
+        alertModal.classList.remove('hidden');
+    }
+
+    function closeCustomAlert() {
+        const alertModal = document.getElementById('customAlert');
+        alertModal.classList.add('hidden');
+    }
 
     // --- Theme Toggle ---
     function toggleTheme() {
@@ -59,7 +72,7 @@ const wsProtocol = "ws";
     }
 
     function showSidebar() { document.getElementById('sidebar').classList.remove('mobile-hidden'); }
-    function copyKey() { navigator.clipboard.writeText(myUniqueKey); alert("Ваш уникальный ключ скопирован!"); }
+    function copyKey() { navigator.clipboard.writeText(myUniqueKey); customAlert("Ваш уникальный ключ скопирован!"); }
 
     // --- Обработка Аватара ---
     function processAvatar(event) {
@@ -103,7 +116,7 @@ const wsProtocol = "ws";
         const username = document.getElementById('regUsername').value;
         const password = document.getElementById('regPassword').value;
 
-        if (!username || !password) return alert("Введите логин и пароль");
+        if (!username || !password) return customAlert("Введите логин и пароль");
 
         myKeys = nacl.box.keyPair();
         const pubKeyBase64 = nacl.util.encodeBase64(myKeys.publicKey);
@@ -131,12 +144,12 @@ const wsProtocol = "ws";
                 localStorage.setItem(`privateKey_${username}`, secretKeyBase64);
                 showProfileSetupForm();
             })
-            .catch(err => alert("Ошибка регистрации: " + err));
+            .catch(err => customAlert("Ошибка регистрации: " + err));
     }
 
     function completeProfileSetup() {
         const nickname = document.getElementById('setupNickname').value;
-        if (!nickname) return alert("Введите ник");
+        if (!nickname) return customAlert("Введите ник");
 
         myNickname = nickname;
 
@@ -179,14 +192,14 @@ const wsProtocol = "ws";
                 loadOfflineMessages();
                 connectWebSocket();
             })
-            .catch(err => alert(err.message));
+            .catch(err => customAlert(err.message));
     }
 
     function performLogin() {
         const username = document.getElementById('loginUsername').value;
         const password = document.getElementById('loginPassword').value;
 
-        if (!username || !password) return alert("Введите логин и пароль");
+        if (!username || !password) return customAlert("Введите логин и пароль");
 
         fetch(`${API_URL}/api/login?user=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`, { method: 'POST' })
             .then(res => {
@@ -217,7 +230,7 @@ const wsProtocol = "ws";
                 loadOfflineMessages();
                 connectWebSocket();
             })
-            .catch(err => alert(err.message));
+            .catch(err => customAlert(err.message));
     }
 
     // --- Поиск и Контакты ---
@@ -242,7 +255,7 @@ const wsProtocol = "ws";
                 `;
             })
             .catch(() => {
-                alert("Пользователь не найден");
+                customAlert("Пользователь не найден");
                 document.getElementById('searchResult').classList.add('hidden');
             });
     }
@@ -437,7 +450,7 @@ const wsProtocol = "ws";
             displayMessage(text, 'sent');
             document.getElementById('msgText').value = '';
         } else {
-            alert("Нет подключения к серверу");
+            customAlert("Нет подключения к серверу");
         }
     }
 
@@ -473,7 +486,7 @@ const wsProtocol = "ws";
                 displayMessage(text, 'received', packet.from);
             } else {
                 // Если чат не открыт, просто показываем уведомление или добавляем контакт (он уже добавлен выше)
-                alert(`Новое сообщение от ${packet.from}`);
+                customAlert(`Новое сообщение от ${packet.from}`);
             }
         }
     }
