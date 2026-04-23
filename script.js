@@ -1,6 +1,5 @@
-const protocol = window.location.protocol === 'https:' ? 'https' : 'http';
+const API_URL = "https://vault-inc.duckdns.org";
 const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-const API_URL = `${protocol}://${window.location.host}`;
     
     let myKeys, myUsername, myUniqueKey, ws;
     let myAvatarBase64 = "";
@@ -284,7 +283,7 @@ const API_URL = `${protocol}://${window.location.host}`;
 
     // --- WebSockets и Шифрование ---
     function connectWebSocket() {
-        ws = new WebSocket(`${wsProtocol}://${window.location.host}/socket.io/?user=${myUsername}`);
+        ws = new WebSocket(`wss://vault-inc.duckdns.org/socket.io/?user=${myUsername}`);
         
         ws.onmessage = (event) => {
             // Игнорируем пинги/понги Socket.io (начинаются с цифр)
