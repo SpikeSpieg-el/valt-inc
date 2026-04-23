@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -50,12 +52,48 @@ type User struct {
 	UniqueKey           string `json:"unique_user_key"`
 	Nickname            string `json:"nickname"`
 	EncryptedPrivateKey string `json:"encrypted_private_key"`
+	ConnectionCode      string `json:"connection_code"`
 }
 
 func generateUniqueKey() string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	return base64.URLEncoding.EncodeToString(b)
+}
+
+func generateConnectionCode(uniqueKey string) string {
+	hash := sha256.Sum256([]byte(uniqueKey))
+	// Берем первые 8 байт хеша и конвертируем в base62
+	bytes := hash[:8]
+	return base62Encode(bytes)
+}
+
+func base62Encode(bytes []byte) string {
+	const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	var num uint64
+	for _, b := range bytes {
+		num = (num << 8) | uint64(b)
+	}
+	
+	if num == 0 {
+		return "0"
+	}
+	
+	var result []byte
+	for num > 0 {
+		result = append([]byte{chars[num%62]}, result...)
+		num /= 62
+	}
+	
+	// Обрезаем или дополняем до 8 символов
+	code := string(result)
+	if len(code) > 8 {
+		return code[:8]
+	}
+	for len(code) < 8 {
+		code += "0"
+	}
+	return code
 }
 
 func getEnv(key, defaultValue string) string {
@@ -109,6 +147,7 @@ func main() {
 	http.HandleFunc("/api/login", corsMiddleware(handleLogin))
 	http.HandleFunc("/api/user", corsMiddleware(handleGetUser))
 	http.HandleFunc("/api/search", corsMiddleware(handleSearchUser))
+	http.HandleFunc("/api/search-by-code", corsMiddleware(handleSearchByCode))
 	http.HandleFunc("/api/contacts", corsMiddleware(handleContacts))
 	http.HandleFunc("/api/add-contact", corsMiddleware(handleAddContact))
 	http.HandleFunc("/api/offline-messages", corsMiddleware(handleOfflineMessages))
@@ -139,10 +178,11 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	uniqueKey := generateUniqueKey()
+	connectionCode := generateConnectionCode(uniqueKey)
 
-	_, err := db.Exec(`INSERT INTO users (username, password_hash, public_key, avatar, unique_user_key, nickname, encrypted_private_key) 
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`, 
-		req.Username, string(hash), req.PubKey, req.Avatar, uniqueKey, req.Nickname, req.EncryptedPrivateKey)
+	_, err := db.Exec(`INSERT INTO users (username, password_hash, public_key, avatar, unique_user_key, nickname, encrypted_private_key, connection_code)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		req.Username, string(hash), req.PubKey, req.Avatar, uniqueKey, req.Nickname, req.EncryptedPrivateKey, connectionCode)
 
 	if err != nil {
 		log.Printf("❌ Register error: %v", err)
@@ -153,7 +193,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"unique_key": uniqueKey})
+	json.NewEncoder(w).Encode(map[string]string{"unique_key": uniqueKey, "connection_code": connectionCode})
 }
 
 func handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -189,11 +229,11 @@ func handleGetUser(w http.ResponseWriter, r *http.Request) {
 	var u User
 	// Используем COALESCE для всех полей, которые могут быть NULL
 	err := db.QueryRow(`
-		SELECT username, public_key, COALESCE(avatar, ''), unique_user_key, 
-		       COALESCE(nickname, ''), COALESCE(encrypted_private_key, '') 
+		SELECT username, public_key, COALESCE(avatar, ''), unique_user_key,
+		       COALESCE(nickname, ''), COALESCE(encrypted_private_key, ''), COALESCE(connection_code, '')
 		FROM users WHERE username = $1`, username).Scan(
-		&u.Username, &u.PublicKey, &u.Avatar, &u.UniqueKey, &u.Nickname, &u.EncryptedPrivateKey)
-	
+		&u.Username, &u.PublicKey, &u.Avatar, &u.UniqueKey, &u.Nickname, &u.EncryptedPrivateKey, &u.ConnectionCode)
+
 	if err != nil {
 		log.Printf("❌ User data not found: %s", username)
 		http.Error(w, "User not found", http.StatusNotFound)
@@ -207,10 +247,26 @@ func handleSearchUser(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
 	var u User
 	err := db.QueryRow(`
-		SELECT username, public_key, COALESCE(avatar, ''), unique_user_key, COALESCE(nickname, '') 
+		SELECT username, public_key, COALESCE(avatar, ''), unique_user_key, COALESCE(nickname, '')
 		FROM users WHERE unique_user_key = $1`, key).Scan(
 		&u.Username, &u.PublicKey, &u.Avatar, &u.UniqueKey, &u.Nickname)
-	
+
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(u)
+}
+
+func handleSearchByCode(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("code")
+	var u User
+	err := db.QueryRow(`
+		SELECT username, public_key, COALESCE(avatar, ''), unique_user_key, COALESCE(nickname, '')
+		FROM users WHERE connection_code = $1`, code).Scan(
+		&u.Username, &u.PublicKey, &u.Avatar, &u.UniqueKey, &u.Nickname)
+
 	if err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
