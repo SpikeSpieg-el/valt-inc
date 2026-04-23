@@ -335,7 +335,7 @@ const wsProtocol = "wss";
                 publicKey: nacl.util.encodeBase64(myKeys.publicKey),
                 avatar: myAvatarBase64
             };
-            ws.send('42' + JSON.stringify(['notification', notification]));
+            ws.send(JSON.stringify(notification));
         }
     }
 
@@ -373,7 +373,7 @@ const wsProtocol = "wss";
 
     // --- WebSockets и Шифрование ---
     function connectWebSocket() {
-        ws = new WebSocket(`${wsProtocol}://vault-inc.duckdns.org/socket.io/?user=${myUsername}`);
+        ws = new WebSocket(`${wsProtocol}://vault-inc.duckdns.org/ws?user=${myUsername}`);
         
         ws.onopen = () => {
             console.log("WebSocket connected");
@@ -388,28 +388,14 @@ const wsProtocol = "wss";
         };
         
         ws.onmessage = (event) => {
-            // Игнорируем пинги/понги Socket.io (начинаются с цифр)
-            if(event.data.startsWith('0') || event.data.startsWith('40')) return;
-
             try {
-                // Если socket.io шлет сообщения в формате: 42["message", {...}]
-                let msgData = event.data;
-                let eventType = '';
-                if(msgData.startsWith('42')) {
-                    const parsed = JSON.parse(msgData.substring(2));
-                    eventType = parsed[0];
-                    msgData = parsed[1];
-                } else {
-                    msgData = JSON.parse(msgData);
-                }
-
+                const msgData = JSON.parse(event.data);
                 if (msgData && msgData.type === 'contact_added') {
-                    // Обрабатываем уведомление о добавлении в контакты
                     handleContactAddedNotification(msgData);
                 } else if (msgData && msgData.ciphertext) {
                     decryptAndDisplay(msgData);
                 }
-            } catch(e) { console.log("Неизвестный формат сообщения", e); }
+            } catch(e) { console.log("Received raw message:", event.data); }
         };
     }
 
@@ -444,9 +430,8 @@ const wsProtocol = "wss";
             nonce: nacl.util.encodeBase64(nonce)
         };
 
-        // Отправка в формате Socket.io
         if(ws && ws.readyState === WebSocket.OPEN) {
-            ws.send('42' + JSON.stringify(['message', packet]));
+            ws.send(JSON.stringify(packet));
             displayMessage(text, 'sent');
             document.getElementById('msgText').value = '';
         } else {

@@ -91,7 +91,7 @@ func main() {
 	if err != nil { log.Fatal(err) }
 
 	// Эндпоинты
-	http.HandleFunc("/socket.io", corsMiddleware(handleConnections))
+	http.HandleFunc("/ws", corsMiddleware(handleConnections))
 	http.HandleFunc("/api/register", corsMiddleware(handleRegister))
 	http.HandleFunc("/api/login", corsMiddleware(handleLogin))
 	http.HandleFunc("/api/user", corsMiddleware(handleGetUser))
@@ -363,8 +363,17 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 // Обработка WebSocket
 func handleConnections(w http.ResponseWriter, r *http.Request) {
 	user := r.URL.Query().Get("user")
+	if user == "" {
+		log.Println("WS Error: No user provided in query")
+		return
+	}
+
 	ws, err := upgrader.Upgrade(w, r, nil)
-	if err != nil { return }
+	if err != nil {
+		log.Printf("Upgrade error for user %s: %v", user, err)
+		return
+	}
+	log.Printf("User connected via WS: %s", user)
 	defer ws.Close()
 
 	// Подписываемся на канал этого пользователя в Redis
@@ -384,26 +393,14 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		_, msg, err := ws.ReadMessage()
 		if err != nil { break }
 
-		msgStr := string(msg)
 		var packet MsgPacket
+		json.Unmarshal(msg, &packet)
 
-		// Парсим Socket.io формат: 42["event", {...}]
-		if len(msgStr) > 2 && msgStr[:2] == "42" {
-			var socketMsg []interface{}
-			if err := json.Unmarshal([]byte(msgStr[2:]), &socketMsg); err == nil && len(socketMsg) == 2 {
-				eventType := socketMsg[0].(string)
-				packetBytes, _ := json.Marshal(socketMsg[1])
-				json.Unmarshal(packetBytes, &packet)
-
-				// Для contact_added уведомлений отправляем на целевого пользователя
-				if eventType == "notification" && packet.Type == "contact_added" && packet.To != "" {
-					packetBytes, _ = json.Marshal(packet)
-					rdb.Publish(ctx, "user:"+packet.To, string(packetBytes))
-					continue
-				}
-			}
-		} else {
-			json.Unmarshal(msg, &packet)
+		// Для contact_added уведомлений отправляем на целевого пользователя
+		if packet.Type == "contact_added" && packet.To != "" {
+			packetBytes, _ := json.Marshal(packet)
+			rdb.Publish(ctx, "user:"+packet.To, string(packetBytes))
+			continue
 		}
 
 		// Отправляем сообщение в Redis-канал получателя
