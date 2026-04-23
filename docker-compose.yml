@@ -41,7 +41,7 @@ services:
       dockerfile: Dockerfile
     container_name: valt-app
     ports:
-      - "3005:8080"
+      - "3005:3005"
     environment:
       - REDIS_ADDR=redis:6379
       - DB_HOST=postgres

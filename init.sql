@@ -20,6 +20,20 @@ CREATE TABLE IF NOT EXISTS offline_messages (
     FOREIGN KEY (to_user) REFERENCES users(username) ON DELETE CASCADE
 );
 
+-- Create contacts table
+CREATE TABLE IF NOT EXISTS contacts (
+    id SERIAL PRIMARY KEY,
+    user_username VARCHAR(255) NOT NULL,
+    contact_username VARCHAR(255) NOT NULL,
+    contact_public_key TEXT NOT NULL,
+    contact_avatar TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_username, contact_username),
+    FOREIGN KEY (user_username) REFERENCES users(username) ON DELETE CASCADE,
+    FOREIGN KEY (contact_username) REFERENCES users(username) ON DELETE CASCADE
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_offline_messages_to_user ON offline_messages(to_user);
 CREATE INDEX IF NOT EXISTS idx_offline_messages_created_at ON offline_messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_contacts_user_username ON contacts(user_username);

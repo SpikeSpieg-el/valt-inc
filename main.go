@@ -95,6 +95,9 @@ func main() {
 	http.HandleFunc("/api/login", corsMiddleware(handleLogin))
 	http.HandleFunc("/api/user", corsMiddleware(handleGetUser))
 	http.HandleFunc("/api/search", corsMiddleware(handleSearchUser))
+	http.HandleFunc("/api/contacts", corsMiddleware(handleContacts))
+	http.HandleFunc("/api/add-contact", corsMiddleware(handleAddContact))
+	http.HandleFunc("/api/offline-messages", corsMiddleware(handleOfflineMessages))
 
 	log.Println("Go Server started on :3005")
 	http.ListenAndServe(":3005", nil)
@@ -225,6 +228,101 @@ func handleSearchUser(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(user)
+}
+
+// Получение контактов пользователя
+func handleContacts(w http.ResponseWriter, r *http.Request) {
+	username := r.URL.Query().Get("user")
+
+	rows, err := db.Query("SELECT contact_username, contact_public_key, contact_avatar FROM contacts WHERE user_username = $1", username)
+	if err != nil {
+		http.Error(w, "Error fetching contacts", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	type Contact struct {
+		Username  string `json:"username"`
+		PublicKey string `json:"public_key"`
+		Avatar    string `json:"avatar"`
+	}
+
+	var contacts []Contact
+	for rows.Next() {
+		var c Contact
+		err := rows.Scan(&c.Username, &c.PublicKey, &c.Avatar)
+		if err != nil {
+			continue
+		}
+		contacts = append(contacts, c)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(contacts)
+}
+
+// Добавление контакта
+func handleAddContact(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserUsername      string `json:"user_username"`
+		ContactUsername   string `json:"contact_username"`
+		ContactPublicKey  string `json:"contact_public_key"`
+		ContactAvatar     string `json:"contact_avatar"`
+	}
+
+	if r.Body != nil {
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+	}
+
+	_, err := db.Exec("INSERT INTO contacts (user_username, contact_username, contact_public_key, contact_avatar) VALUES ($1, $2, $3, $4) ON CONFLICT (user_username, contact_username) DO NOTHING",
+		req.UserUsername, req.ContactUsername, req.ContactPublicKey, req.ContactAvatar)
+	if err != nil {
+		http.Error(w, "Error adding contact", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// Получение и удаление офлайн-сообщений
+func handleOfflineMessages(w http.ResponseWriter, r *http.Request) {
+	username := r.URL.Query().Get("user")
+
+	type OfflineMessage struct {
+		From       string `json:"from"`
+		Ciphertext string `json:"ciphertext"`
+		Nonce      string `json:"nonce"`
+	}
+
+	rows, err := db.Query("SELECT from_user, ciphertext, nonce FROM offline_messages WHERE to_user = $1", username)
+	if err != nil {
+		http.Error(w, "Error fetching offline messages", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var messages []OfflineMessage
+	for rows.Next() {
+		var msg OfflineMessage
+		err := rows.Scan(&msg.From, &msg.Ciphertext, &msg.Nonce)
+		if err != nil {
+			continue
+		}
+		messages = append(messages, msg)
+	}
+
+	// Удаляем доставленные сообщения
+	_, err = db.Exec("DELETE FROM offline_messages WHERE to_user = $1", username)
+	if err != nil {
+		log.Printf("Error deleting offline messages: %v", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(messages)
 }
 
 // Обработка WebSocket

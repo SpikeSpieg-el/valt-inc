@@ -1,4 +1,6 @@
-const API_URL = "https://vault-inc.duckdns.org";
+const protocol = window.location.protocol === 'https:' ? 'https' : 'http';
+const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+const API_URL = `${protocol}://${window.location.host}`;
     
     let myKeys, myUsername, myUniqueKey, ws;
     let myAvatarBase64 = "";
@@ -85,6 +87,7 @@ const API_URL = "https://vault-inc.duckdns.org";
 
         myKeys = nacl.box.keyPair();
         const pubKeyBase64 = nacl.util.encodeBase64(myKeys.publicKey);
+        const secretKeyBase64 = nacl.util.encodeBase64(myKeys.secretKey);
 
         const data = {
             username: username,
@@ -104,6 +107,7 @@ const API_URL = "https://vault-inc.duckdns.org";
             .then(data => {
                 myUniqueKey = data.unique_key;
                 myUsername = username;
+                localStorage.setItem(`privateKey_${username}`, secretKeyBase64);
                 alert("Регистрация успешна! Войдите в аккаунт.");
                 showLoginForm();
             })
@@ -125,9 +129,23 @@ const API_URL = "https://vault-inc.duckdns.org";
             .then(res => res.json())
             .then(data => {
                 myUniqueKey = data.unique_user_key;
-                myKeys = nacl.box.keyPair();
                 userPublicKeys[myUsername] = data.public_key;
+                
+                const savedSecretKey = localStorage.getItem(`privateKey_${username}`);
+                if (savedSecretKey) {
+                    const secretKeyBytes = nacl.util.decodeBase64(savedSecretKey);
+                    const publicKeyBytes = nacl.util.decodeBase64(data.public_key);
+                    myKeys = {
+                        publicKey: publicKeyBytes,
+                        secretKey: secretKeyBytes
+                    };
+                } else {
+                    myKeys = nacl.box.keyPair();
+                }
+                
                 showChatInterface(data.avatar);
+                loadContacts();
+                loadOfflineMessages();
                 connectWebSocket();
             })
             .catch(err => alert(err.message));
@@ -168,8 +186,57 @@ const API_URL = "https://vault-inc.duckdns.org";
         document.getElementById('searchKey').value = '';
         renderContacts();
 
+        // Сохраняем контакт в базу данных
+        saveContactToDatabase(username, publicKey, avatar);
+
         // Отправляем уведомление добавленному пользователю
         sendContactAddedNotification(username);
+    }
+
+    function loadContacts() {
+        fetch(`${API_URL}/api/contacts?user=${encodeURIComponent(myUsername)}`)
+            .then(res => res.json())
+            .then(data => {
+                data.forEach(contact => {
+                    contacts[contact.username] = { publicKey: contact.public_key, avatar: contact.avatar };
+                    userPublicKeys[contact.username] = contact.public_key;
+                });
+                renderContacts();
+            })
+            .catch(err => console.error("Error loading contacts:", err));
+    }
+
+    function loadOfflineMessages() {
+        fetch(`${API_URL}/api/offline-messages?user=${encodeURIComponent(myUsername)}`)
+            .then(res => res.json())
+            .then(messages => {
+                messages.forEach(msg => {
+                    const packet = {
+                        from: msg.from,
+                        ciphertext: msg.ciphertext,
+                        nonce: msg.nonce
+                    };
+                    decryptAndDisplay(packet);
+                });
+            })
+            .catch(err => console.error("Error loading offline messages:", err));
+    }
+
+    function saveContactToDatabase(username, publicKey, avatar) {
+        const data = {
+            user_username: myUsername,
+            contact_username: username,
+            contact_public_key: publicKey,
+            contact_avatar: avatar
+        };
+
+        fetch(`${API_URL}/api/add-contact`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        }).catch(err => console.error("Error saving contact:", err));
     }
 
     function sendContactAddedNotification(targetUsername) {
@@ -217,7 +284,7 @@ const API_URL = "https://vault-inc.duckdns.org";
 
     // --- WebSockets и Шифрование ---
     function connectWebSocket() {
-        ws = new WebSocket(`wss://vault-inc.duckdns.org/socket.io/?user=${myUsername}`);
+        ws = new WebSocket(`${wsProtocol}://${window.location.host}/socket.io/?user=${myUsername}`);
         
         ws.onmessage = (event) => {
             // Игнорируем пинги/понги Socket.io (начинаются с цифр)
