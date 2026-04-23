@@ -273,11 +273,30 @@ func handleAddContact(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, err := db.Exec("INSERT INTO contacts (user_username, contact_username, contact_public_key, contact_avatar) VALUES ($1, $2, $3, $4) ON CONFLICT (user_username, contact_username) DO NOTHING",
+	_, err := db.Exec("INSERT INTO contacts (user_username, contact_username, contact_public_key, contact_avatar) VALUES ($1, $2, $3, $4) ON CONFLICT (user_username, contact_username) DO UPDATE SET contact_public_key = $3, contact_avatar = $4",
 		req.UserUsername, req.ContactUsername, req.ContactPublicKey, req.ContactAvatar)
 	if err != nil {
 		http.Error(w, "Error adding contact", http.StatusInternalServerError)
 		return
+	}
+
+	// Создаём обратный контакт (B→A), чтобы добавленный пользователь тоже видел контакт
+	var userPubKey, userAvatar, userNickname string
+	err = db.QueryRow("SELECT public_key, avatar, nickname FROM users WHERE username = $1", req.UserUsername).Scan(&userPubKey, &userAvatar, &userNickname)
+	if err == nil {
+		db.Exec("INSERT INTO contacts (user_username, contact_username, contact_public_key, contact_avatar) VALUES ($1, $2, $3, $4) ON CONFLICT (user_username, contact_username) DO UPDATE SET contact_public_key = $3, contact_avatar = $4",
+			req.ContactUsername, req.UserUsername, userPubKey, userAvatar)
+
+		// Уведомляем добавленного пользователя через Redis
+		notification := map[string]interface{}{
+			"type":       "contact_added",
+			"from":       req.UserUsername,
+			"public_key": userPubKey,
+			"avatar":     userAvatar,
+			"nickname":   userNickname,
+		}
+		notifBytes, _ := json.Marshal(notification)
+		rdb.Publish(ctx, "user:"+req.ContactUsername, string(notifBytes))
 	}
 
 	w.Header().Set("Content-Type", "application/json")

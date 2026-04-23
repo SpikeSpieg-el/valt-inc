@@ -135,7 +135,7 @@ const Chat = {
         }
 
         if (packet.type === 'contact_added') {
-            UI.addContactToUI(packet.from, packet.publicKey, packet.avatar);
+            UI.addContactToUI(packet.from, packet.public_key, packet.avatar, packet.nickname);
             return;
         }
 
