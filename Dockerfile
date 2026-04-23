@@ -14,6 +14,6 @@ WORKDIR /app
 
 COPY --from=builder /app/messenger .
 
-EXPOSE 8080
+EXPOSE 3005
 
 CMD ["./messenger"]

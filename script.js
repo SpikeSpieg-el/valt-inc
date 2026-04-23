@@ -1,4 +1,4 @@
-const API_URL = "http://localhost:3005";
+const API_URL = "https://vault-inc.duckdns.org";
     
     let myKeys, myUsername, myUniqueKey, ws;
     let myAvatarBase64 = "";
@@ -217,7 +217,7 @@ const API_URL = "http://localhost:3005";
 
     // --- WebSockets и Шифрование ---
     function connectWebSocket() {
-        ws = new WebSocket(`ws://localhost:3005/?user=${myUsername}`);
+        ws = new WebSocket(`wss://vault-inc.duckdns.org/socket.io/?user=${myUsername}`);
         
         ws.onmessage = (event) => {
             // Игнорируем пинги/понги Socket.io (начинаются с цифр)

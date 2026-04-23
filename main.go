@@ -96,8 +96,8 @@ func main() {
 	http.HandleFunc("/api/user", corsMiddleware(handleGetUser))
 	http.HandleFunc("/api/search", corsMiddleware(handleSearchUser))
 
-	log.Println("Go Server started on :8080")
-	http.ListenAndServe(":8080", nil)
+	log.Println("Go Server started on :3005")
+	http.ListenAndServe(":3005", nil)
 }
 
 // Регистрация пользователя
