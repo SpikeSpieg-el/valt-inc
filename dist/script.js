@@ -196,12 +196,10 @@ const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
         fetch(`${API_URL}/api/contacts?user=${encodeURIComponent(myUsername)}`)
             .then(res => res.json())
             .then(data => {
-                if (data && Array.isArray(data)) {
-                    data.forEach(contact => {
-                        contacts[contact.username] = { publicKey: contact.public_key, avatar: contact.avatar };
-                        userPublicKeys[contact.username] = contact.public_key;
-                    });
-                }
+                data.forEach(contact => {
+                    contacts[contact.username] = { publicKey: contact.public_key, avatar: contact.avatar };
+                    userPublicKeys[contact.username] = contact.public_key;
+                });
                 renderContacts();
             })
             .catch(err => console.error("Error loading contacts:", err));
@@ -211,16 +209,14 @@ const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
         fetch(`${API_URL}/api/offline-messages?user=${encodeURIComponent(myUsername)}`)
             .then(res => res.json())
             .then(messages => {
-                if (messages && Array.isArray(messages)) {
-                    messages.forEach(msg => {
-                        const packet = {
-                            from: msg.from,
-                            ciphertext: msg.ciphertext,
-                            nonce: msg.nonce
-                        };
-                        decryptAndDisplay(packet);
-                    });
-                }
+                messages.forEach(msg => {
+                    const packet = {
+                        from: msg.from,
+                        ciphertext: msg.ciphertext,
+                        nonce: msg.nonce
+                    };
+                    decryptAndDisplay(packet);
+                });
             })
             .catch(err => console.error("Error loading offline messages:", err));
     }
@@ -288,18 +284,6 @@ const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     // --- WebSockets и Шифрование ---
     function connectWebSocket() {
         ws = new WebSocket(`wss://vault-inc.duckdns.org/socket.io/?user=${myUsername}`);
-        
-        ws.onopen = () => {
-            console.log("WebSocket connected");
-        };
-        
-        ws.onerror = (error) => {
-            console.error("WebSocket error:", error);
-        };
-        
-        ws.onclose = () => {
-            console.log("WebSocket disconnected");
-        };
         
         ws.onmessage = (event) => {
             // Игнорируем пинги/понги Socket.io (начинаются с цифр)
