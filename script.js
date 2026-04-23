@@ -1,4 +1,4 @@
-const API_URL = "https://vault-inc.duckdns.org:3005";
+const API_URL = "https://vault-inc.duckdns.org";
 const wsProtocol = "wss";
     
     let myKeys, myUsername, myUniqueKey, ws;
@@ -373,7 +373,7 @@ const wsProtocol = "wss";
 
     // --- WebSockets и Шифрование ---
     function connectWebSocket() {
-        ws = new WebSocket(`${wsProtocol}://vault-inc.duckdns.org:3005/socket.io/?user=${myUsername}`);
+        ws = new WebSocket(`${wsProtocol}://vault-inc.duckdns.org/socket.io/?user=${myUsername}`);
         
         ws.onopen = () => {
             console.log("WebSocket connected");
