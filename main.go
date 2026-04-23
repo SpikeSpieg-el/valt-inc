@@ -46,11 +46,12 @@ type MsgPacket struct {
 }
 
 type User struct {
-	Username     string `json:"username"`
-	PublicKey    string `json:"public_key"`
-	Avatar       string `json:"avatar"`
-	UniqueKey    string `json:"unique_user_key"`
-	Nickname     string `json:"nickname"`
+	Username            string `json:"username"`
+	PublicKey           string `json:"public_key"`
+	Avatar              string `json:"avatar"`
+	UniqueKey           string `json:"unique_user_key"`
+	Nickname            string `json:"nickname"`
+	EncryptedPrivateKey string `json:"encrypted_private_key"`
 }
 
 func generateUniqueKey() string {
@@ -110,6 +111,7 @@ func main() {
 	http.HandleFunc("/api/add-contact", corsMiddleware(handleAddContact))
 	http.HandleFunc("/api/offline-messages", corsMiddleware(handleOfflineMessages))
 	http.HandleFunc("/api/update-profile", corsMiddleware(handleUpdateProfile))
+	http.HandleFunc("/api/history", corsMiddleware(handleHistory))
 
 	log.Println("Go Server started on :3005")
 	http.ListenAndServe(":3005", nil)
@@ -118,11 +120,12 @@ func main() {
 // Регистрация пользователя
 func handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		PubKey   string `json:"pubkey"`
-		Avatar   string `json:"avatar"`
-		Nickname string `json:"nickname"`
+		Username            string `json:"username"`
+		Password            string `json:"password"`
+		PubKey              string `json:"pubkey"`
+		Avatar              string `json:"avatar"`
+		Nickname            string `json:"nickname"`
+		EncryptedPrivateKey string `json:"encrypted_private_key"`
 	}
 
 	log.Printf("Register request received. Method: %s", r.Method)
@@ -150,7 +153,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 
 			uniqueKey := generateUniqueKey()
 
-			_, err = db.Exec("INSERT INTO users (username, password_hash, public_key, avatar, unique_user_key, nickname) VALUES ($1, $2, $3, $4, $5, $6)", username, hash, pubKey, avatar, uniqueKey, nickname)
+			_, err = db.Exec("INSERT INTO users (username, password_hash, public_key, avatar, unique_user_key, nickname, encrypted_private_key) VALUES ($1, $2, $3, $4, $5, $6, $7)", username, hash, pubKey, avatar, uniqueKey, nickname, req.EncryptedPrivateKey)
 			if err != nil {
 				log.Printf("Error inserting user: %v", err)
 				w.Header().Set("Content-Type", "application/json")
@@ -182,7 +185,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	uniqueKey := generateUniqueKey()
 
-	_, err = db.Exec("INSERT INTO users (username, password_hash, public_key, avatar, unique_user_key) VALUES ($1, $2, $3, $4, $5)", username, hash, pubKey, avatar, uniqueKey)
+	_, err = db.Exec("INSERT INTO users (username, password_hash, public_key, avatar, unique_user_key, encrypted_private_key) VALUES ($1, $2, $3, $4, $5, $6)", username, hash, pubKey, avatar, uniqueKey, "")
 	if err != nil {
 		log.Printf("Error inserting user: %v", err)
 		http.Error(w, "Error registering user", http.StatusInternalServerError)
@@ -251,7 +254,7 @@ func handleGetUser(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("user")
 
 	var user User
-	err := db.QueryRow("SELECT username, public_key, avatar, unique_user_key, nickname FROM users WHERE username = $1", username).Scan(&user.Username, &user.PublicKey, &user.Avatar, &user.UniqueKey, &user.Nickname)
+	err := db.QueryRow("SELECT username, public_key, avatar, unique_user_key, nickname, encrypted_private_key FROM users WHERE username = $1", username).Scan(&user.Username, &user.PublicKey, &user.Avatar, &user.UniqueKey, &user.Nickname, &user.EncryptedPrivateKey)
 	if err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
@@ -402,6 +405,28 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// Получение истории сообщений
+func handleHistory(w http.ResponseWriter, r *http.Request) {
+	username := r.URL.Query().Get("user")
+	
+	rows, err := db.Query("SELECT from_user, to_user, ciphertext, nonce FROM messages_history WHERE from_user = $1 OR to_user = $1 ORDER BY created_at ASC", username)
+	if err != nil {
+		http.Error(w, "Error", 500)
+		return
+	}
+	defer rows.Close()
+
+	var msgs []MsgPacket
+	for rows.Next() {
+		var m MsgPacket
+		rows.Scan(&m.From, &m.To, &m.Ciphertext, &m.Nonce)
+		msgs = append(msgs, m)
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(msgs)
+}
+
 // Обработка WebSocket
 func handleConnections(w http.ResponseWriter, r *http.Request) {
 	user := r.URL.Query().Get("user")
@@ -448,6 +473,12 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		// Отправляем сообщение в Redis-канал получателя
 		packetBytes, _ := json.Marshal(packet)
 		receivers, _ := rdb.Publish(ctx, "user:"+packet.To, string(packetBytes)).Result()
+
+		// Сохраняем в общую историю ВСЕГДА
+		if packet.Ciphertext != "" {
+			db.Exec("INSERT INTO messages_history (from_user, to_user, ciphertext, nonce) VALUES ($1, $2, $3, $4)",
+				packet.From, packet.To, packet.Ciphertext, packet.Nonce)
+		}
 
 		// Если получатель не в сети (никто не слушает канал в Redis), сохраняем в БД
 		if receivers == 0 && packet.Ciphertext != "" {

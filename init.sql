@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
     avatar TEXT,
     unique_user_key VARCHAR(255) UNIQUE NOT NULL,
     nickname VARCHAR(255),
+    encrypted_private_key TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -34,7 +35,20 @@ CREATE TABLE IF NOT EXISTS contacts (
     FOREIGN KEY (contact_username) REFERENCES users(username) ON DELETE CASCADE
 );
 
+-- Create messages_history table
+CREATE TABLE IF NOT EXISTS messages_history (
+    id SERIAL PRIMARY KEY,
+    from_user TEXT,
+    to_user TEXT,
+    ciphertext TEXT,
+    nonce TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_offline_messages_to_user ON offline_messages(to_user);
 CREATE INDEX IF NOT EXISTS idx_offline_messages_created_at ON offline_messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_contacts_user_username ON contacts(user_username);
+CREATE INDEX IF NOT EXISTS idx_messages_history_from_user ON messages_history(from_user);
+CREATE INDEX IF NOT EXISTS idx_messages_history_to_user ON messages_history(to_user);
+CREATE INDEX IF NOT EXISTS idx_messages_history_created_at ON messages_history(created_at);
