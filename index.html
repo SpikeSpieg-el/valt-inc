@@ -25,12 +25,19 @@
     <h2><i class="fas fa-user-plus"></i> Регистрация</h2>
     <div class="input-group"><input type="text" id="regUsername" placeholder="Логин"></div>
     <div class="input-group"><input type="password" id="regPassword" placeholder="Пароль"></div>
-    <div class="input-group">
-        <label style="font-size: 13px; color: gray; margin-bottom: 4px; display:block;">Аватар (опционально)</label>
-        <input type="file" id="regAvatarFile" accept="image/*" onchange="processAvatar(event)">
-    </div>
     <button onclick="register()">Зарегистрироваться</button>
     <div class="auth-switch">Уже есть аккаунт? <a href="#" onclick="showLoginForm()">Войти</a></div>
+</div>
+
+<!-- Profile Setup Form (after registration) -->
+<div id="profileSetupForm" class="auth-container hidden">
+    <h2><i class="fas fa-user-edit"></i> Настройка профиля</h2>
+    <div class="input-group"><input type="text" id="setupNickname" placeholder="Ваш ник (как вас видят другие)"></div>
+    <div class="input-group">
+        <label style="font-size: 13px; color: gray; margin-bottom: 4px; display:block;">Аватар (опционально)</label>
+        <input type="file" id="setupAvatarFile" accept="image/*" onchange="processSetupAvatar(event)">
+    </div>
+    <button onclick="completeProfileSetup()">Сохранить и войти</button>
 </div>
 
 <!-- Main Chat App -->

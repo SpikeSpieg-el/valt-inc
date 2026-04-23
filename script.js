@@ -1,7 +1,8 @@
-const API_URL = "https://vault-inc.duckdns.org";
+const API_URL = "https://vault-inc.duckdns.org:3005";
 const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     
     let myKeys, myUsername, myUniqueKey, ws;
+    let myNickname = "";
     let myAvatarBase64 = "";
     let contacts = {};
     let currentChatUser = null;
@@ -34,15 +35,18 @@ const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     document.addEventListener('DOMContentLoaded', loadTheme);
 
     // --- UI Переключения ---
-    function showRegisterForm() { document.getElementById('registerForm').classList.remove('hidden'); document.getElementById('loginForm').classList.add('hidden'); }
-    function showLoginForm() { document.getElementById('registerForm').classList.add('hidden'); document.getElementById('loginForm').classList.remove('hidden'); }
+    function showRegisterForm() { document.getElementById('registerForm').classList.remove('hidden'); document.getElementById('loginForm').classList.add('hidden'); document.getElementById('profileSetupForm').classList.add('hidden'); }
+    function showLoginForm() { document.getElementById('registerForm').classList.add('hidden'); document.getElementById('loginForm').classList.remove('hidden'); document.getElementById('profileSetupForm').classList.add('hidden'); }
+    function showProfileSetupForm() { document.getElementById('registerForm').classList.add('hidden'); document.getElementById('profileSetupForm').classList.remove('hidden'); }
     
     function showChatInterface(avatarUrl) {
         document.getElementById('registerForm').classList.add('hidden');
         document.getElementById('loginForm').classList.add('hidden');
+        document.getElementById('profileSetupForm').classList.add('hidden');
         document.getElementById('chatInterface').classList.remove('hidden');
         
-        document.getElementById('displayUser').innerText = myUsername;
+        const displayName = myNickname || myUsername;
+        document.getElementById('displayUser').innerText = displayName;
         document.getElementById('myUniqueKeyPreview').innerText = myUniqueKey.substring(0, 10) + "...";
         
         if (avatarUrl && avatarUrl.startsWith('data:image')) {
@@ -50,7 +54,7 @@ const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
             document.getElementById('myAvatarDisplay').style.display = 'flex';
             document.getElementById('myAvatarDisplay').src = avatarUrl;
         } else {
-            document.getElementById('myAvatarText').innerText = myUsername.charAt(0).toUpperCase();
+            document.getElementById('myAvatarText').innerText = displayName.charAt(0).toUpperCase();
         }
     }
 
@@ -65,7 +69,24 @@ const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
         reader.onload = function(e) {
             const img = new Image();
             img.onload = function() {
-                // Сжимаем картинку до 64x64, чтобы Base64 не был слишком длинным для GET-параметра
+                const canvas = document.createElement('canvas');
+                canvas.width = 64; canvas.height = 64;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, 64, 64);
+                myAvatarBase64 = canvas.toDataURL('image/jpeg', 0.6);
+            }
+            img.src = e.target.result;
+        }
+        reader.readAsDataURL(file);
+    }
+
+    function processSetupAvatar(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const img = new Image();
+            img.onload = function() {
                 const canvas = document.createElement('canvas');
                 canvas.width = 64; canvas.height = 64;
                 const ctx = canvas.getContext('2d');
@@ -92,7 +113,8 @@ const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
             username: username,
             password: password,
             pubkey: pubKeyBase64,
-            avatar: myAvatarBase64
+            avatar: "",
+            nickname: ""
         };
 
         fetch(`${API_URL}/api/register`, {
@@ -107,10 +129,57 @@ const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
                 myUniqueKey = data.unique_key;
                 myUsername = username;
                 localStorage.setItem(`privateKey_${username}`, secretKeyBase64);
-                alert("Регистрация успешна! Войдите в аккаунт.");
-                showLoginForm();
+                showProfileSetupForm();
             })
             .catch(err => alert("Ошибка регистрации: " + err));
+    }
+
+    function completeProfileSetup() {
+        const nickname = document.getElementById('setupNickname').value;
+        if (!nickname) return alert("Введите ник");
+
+        myNickname = nickname;
+
+        const data = {
+            username: myUsername,
+            nickname: myNickname,
+            avatar: myAvatarBase64
+        };
+
+        fetch(`${API_URL}/api/update-profile`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        })
+            .then(res => {
+                if (!res.ok) throw new Error("Ошибка обновления профиля");
+                return fetch(`${API_URL}/api/user?user=${encodeURIComponent(myUsername)}`);
+            })
+            .then(res => res.json())
+            .then(data => {
+                myUniqueKey = data.unique_user_key;
+                userPublicKeys[myUsername] = data.public_key;
+                
+                const savedSecretKey = localStorage.getItem(`privateKey_${myUsername}`);
+                if (savedSecretKey) {
+                    const secretKeyBytes = nacl.util.decodeBase64(savedSecretKey);
+                    const publicKeyBytes = nacl.util.decodeBase64(data.public_key);
+                    myKeys = {
+                        publicKey: publicKeyBytes,
+                        secretKey: secretKeyBytes
+                    };
+                } else {
+                    myKeys = nacl.box.keyPair();
+                }
+                
+                showChatInterface(data.avatar);
+                loadContacts();
+                loadOfflineMessages();
+                connectWebSocket();
+            })
+            .catch(err => alert(err.message));
     }
 
     function performLogin() {
@@ -128,6 +197,7 @@ const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
             .then(res => res.json())
             .then(data => {
                 myUniqueKey = data.unique_user_key;
+                myNickname = data.nickname || myUsername;
                 userPublicKeys[myUsername] = data.public_key;
                 
                 const savedSecretKey = localStorage.getItem(`privateKey_${username}`);
@@ -160,11 +230,12 @@ const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
             .then(data => {
                 const resultDiv = document.getElementById('searchResult');
                 resultDiv.classList.remove('hidden');
+                const displayName = data.nickname || data.username;
                 resultDiv.innerHTML = `
-                    <div class="contact-item" onclick="addContact('${data.username}', '${data.public_key}', '${data.avatar || ''}')">
+                    <div class="contact-item" onclick="addContact('${data.username}', '${data.public_key}', '${data.avatar || ''}', '${displayName}')">
                         <img src="${data.avatar || 'https://via.placeholder.com/40'}" class="contact-avatar" alt="avatar">
                         <div>
-                            <strong>${data.username}</strong><br>
+                            <strong>${displayName}</strong><br>
                             <small style="color:var(--text-muted)">Нажмите, чтобы добавить</small>
                         </div>
                     </div>
@@ -176,9 +247,9 @@ const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
             });
     }
 
-    function addContact(username, publicKey, avatar) {
+    function addContact(username, publicKey, avatar, displayName) {
         if (contacts[username] || username === myUsername) return;
-        contacts[username] = { publicKey, avatar };
+        contacts[username] = { publicKey, avatar, displayName };
         userPublicKeys[username] = publicKey;
 
         document.getElementById('searchResult').classList.add('hidden');
@@ -262,23 +333,25 @@ const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
         for (const [username, data] of Object.entries(contacts)) {
             const div = document.createElement('div');
             div.className = 'contact-item' + (currentChatUser === username ? ' active' : '');
+            const displayName = data.displayName || username;
             div.innerHTML = `
                 <img src="${data.avatar || 'https://via.placeholder.com/40'}" class="contact-avatar" alt="avatar">
-                <div><strong>${username}</strong></div>
+                <div><strong>${displayName}</strong></div>
             `;
-            div.onclick = () => selectContact(username);
+            div.onclick = () => selectContact(username, displayName);
             list.appendChild(div);
         }
     }
 
-    function selectContact(username) {
+    function selectContact(username, displayName) {
         currentChatUser = username;
-        document.getElementById('currentChatUser').innerText = username;
+        const name = displayName || username;
+        document.getElementById('currentChatUser').innerText = name;
         document.getElementById('chatHeaderAvatar').src = contacts[username]?.avatar || 'https://via.placeholder.com/40';
         
         document.getElementById('emptyChatState').classList.add('hidden');
         document.getElementById('activeChatArea').classList.remove('hidden');
-        document.getElementById('messages').innerHTML = ''; // Для демо очищаем, в идеале сохранять историю локально
+        document.getElementById('messages').innerHTML = ''; 
         
         if(window.innerWidth <= 768) {
             document.getElementById('sidebar').classList.add('mobile-hidden');
@@ -287,7 +360,7 @@ const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
 
     // --- WebSockets и Шифрование ---
     function connectWebSocket() {
-        ws = new WebSocket(`wss://vault-inc.duckdns.org/socket.io/?user=${myUsername}`);
+        ws = new WebSocket(`${wsProtocol}://vault-inc.duckdns.org:3005/socket.io/?user=${myUsername}`);
         
         ws.onopen = () => {
             console.log("WebSocket connected");

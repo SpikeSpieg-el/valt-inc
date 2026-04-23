@@ -41,6 +41,7 @@ type User struct {
 	PublicKey    string `json:"public_key"`
 	Avatar       string `json:"avatar"`
 	UniqueKey    string `json:"unique_user_key"`
+	Nickname     string `json:"nickname"`
 }
 
 func generateUniqueKey() string {
@@ -98,6 +99,7 @@ func main() {
 	http.HandleFunc("/api/contacts", corsMiddleware(handleContacts))
 	http.HandleFunc("/api/add-contact", corsMiddleware(handleAddContact))
 	http.HandleFunc("/api/offline-messages", corsMiddleware(handleOfflineMessages))
+	http.HandleFunc("/api/update-profile", corsMiddleware(handleUpdateProfile))
 
 	log.Println("Go Server started on :3005")
 	http.ListenAndServe(":3005", nil)
@@ -110,6 +112,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		PubKey   string `json:"pubkey"`
 		Avatar   string `json:"avatar"`
+		Nickname string `json:"nickname"`
 	}
 
 	log.Printf("Register request received. Method: %s", r.Method)
@@ -124,6 +127,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 			password := req.Password
 			pubKey := req.PubKey
 			avatar := req.Avatar
+			nickname := req.Nickname
 
 			log.Printf("Registering user: %s, avatar length: %d", username, len(avatar))
 
@@ -136,7 +140,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 
 			uniqueKey := generateUniqueKey()
 
-			_, err = db.Exec("INSERT INTO users (username, password_hash, public_key, avatar, unique_user_key) VALUES ($1, $2, $3, $4, $5)", username, hash, pubKey, avatar, uniqueKey)
+			_, err = db.Exec("INSERT INTO users (username, password_hash, public_key, avatar, unique_user_key, nickname) VALUES ($1, $2, $3, $4, $5, $6)", username, hash, pubKey, avatar, uniqueKey, nickname)
 			if err != nil {
 				log.Printf("Error inserting user: %v", err)
 				w.Header().Set("Content-Type", "application/json")
@@ -205,7 +209,7 @@ func handleGetUser(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("user")
 
 	var user User
-	err := db.QueryRow("SELECT username, public_key, avatar, unique_user_key FROM users WHERE username = $1", username).Scan(&user.Username, &user.PublicKey, &user.Avatar, &user.UniqueKey)
+	err := db.QueryRow("SELECT username, public_key, avatar, unique_user_key, nickname FROM users WHERE username = $1", username).Scan(&user.Username, &user.PublicKey, &user.Avatar, &user.UniqueKey, &user.Nickname)
 	if err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
@@ -220,7 +224,7 @@ func handleSearchUser(w http.ResponseWriter, r *http.Request) {
 	uniqueKey := r.URL.Query().Get("key")
 
 	var user User
-	err := db.QueryRow("SELECT username, public_key, avatar, unique_user_key FROM users WHERE unique_user_key = $1", uniqueKey).Scan(&user.Username, &user.PublicKey, &user.Avatar, &user.UniqueKey)
+	err := db.QueryRow("SELECT username, public_key, avatar, unique_user_key, nickname FROM users WHERE unique_user_key = $1", uniqueKey).Scan(&user.Username, &user.PublicKey, &user.Avatar, &user.UniqueKey, &user.Nickname)
 	if err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
@@ -323,6 +327,31 @@ func handleOfflineMessages(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(messages)
+}
+
+// Обновление профиля (ник и аватар)
+func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		Nickname string `json:"nickname"`
+		Avatar   string `json:"avatar"`
+	}
+
+	if r.Body != nil {
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+	}
+
+	_, err := db.Exec("UPDATE users SET nickname = $1, avatar = $2 WHERE username = $3", req.Nickname, req.Avatar, req.Username)
+	if err != nil {
+		http.Error(w, "Error updating profile", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 // Обработка WebSocket

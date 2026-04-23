@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS users (
     public_key TEXT NOT NULL,
     avatar TEXT,
     unique_user_key VARCHAR(255) UNIQUE NOT NULL,
+    nickname VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
