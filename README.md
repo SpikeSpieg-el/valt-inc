@@ -34,6 +34,46 @@ Copy `.env.example` to `.env` and customize:
 cp .env.example .env
 ```
 
+## Architecture & Stack Flow
+
+### Components
+
+- **Frontend**: Static files (HTML/JS/CSS) hosted on GitHub Pages (`spikespieg-el.github.io`)
+- **Caddy Reverse Proxy**: Handles HTTPS on port 443, proxies requests to backend
+- **Go Backend**: REST API + WebSocket server in Docker on port 3005
+- **PostgreSQL**: User data, contacts, offline messages
+- **Redis**: Pub/sub for real-time message delivery
+
+### Request Flow
+
+```
+User Browser (GitHub Pages)
+    ↓ HTTPS (port 443)
+Caddy (vault-inc.duckdns.org)
+    ↓ Proxy
+    ├─ /api/* → Go Backend (port 3005)
+    ├─ /socket.io* → Go Backend (port 3005)
+    └─ /* → Static files (dist/)
+```
+
+### How It Works
+
+1. **Frontend** calls `https://vault-inc.duckdns.org/api/*` (no port specified)
+2. **Caddy** receives HTTPS on port 443, terminates SSL
+3. **Caddy** proxies `/api/*` requests to Go backend on `127.0.0.1:3005`
+4. **Go backend** processes requests:
+   - REST API endpoints for auth, user data, contacts
+   - WebSocket endpoint for real-time messaging
+5. **PostgreSQL** stores users, contacts, offline messages
+6. **Redis** pub/sub delivers messages to online users in real-time
+
+### Important Notes
+
+- Frontend NEVER connects directly to port 3005
+- All traffic goes through Caddy (HTTPS on 443)
+- Go backend runs HTTP (no SSL) internally on port 3005
+- Caddy handles SSL certificates automatically via Let's Encrypt
+
 ## Services
 
 - **App**: Go backend on port 3005 (container: 8080)

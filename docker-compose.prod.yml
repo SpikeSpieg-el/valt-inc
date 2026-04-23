@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-valtpass}
       POSTGRES_DB: ${DB_NAME:-messenger}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres-data-prod:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql

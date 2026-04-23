@@ -282,7 +282,7 @@ const wsProtocol = "wss";
             .then(data => {
                 if (data && Array.isArray(data)) {
                     data.forEach(contact => {
-                        contacts[contact.username] = { publicKey: contact.public_key, avatar: contact.avatar };
+                        contacts[contact.username] = { publicKey: contact.public_key, avatar: contact.avatar, displayName: contact.nickname || contact.username };
                         userPublicKeys[contact.username] = contact.public_key;
                     });
                 }

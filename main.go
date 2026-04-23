@@ -238,7 +238,12 @@ func handleSearchUser(w http.ResponseWriter, r *http.Request) {
 func handleContacts(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("user")
 
-	rows, err := db.Query("SELECT contact_username, contact_public_key, contact_avatar FROM contacts WHERE user_username = $1", username)
+	rows, err := db.Query(`
+		SELECT c.contact_username, c.contact_public_key, c.contact_avatar, u.nickname 
+		FROM contacts c 
+		LEFT JOIN users u ON c.contact_username = u.username 
+		WHERE c.user_username = $1
+	`, username)
 	if err != nil {
 		http.Error(w, "Error fetching contacts", http.StatusInternalServerError)
 		return
@@ -249,12 +254,13 @@ func handleContacts(w http.ResponseWriter, r *http.Request) {
 		Username  string `json:"username"`
 		PublicKey string `json:"public_key"`
 		Avatar    string `json:"avatar"`
+		Nickname  string `json:"nickname"`
 	}
 
 	var contacts []Contact
 	for rows.Next() {
 		var c Contact
-		err := rows.Scan(&c.Username, &c.PublicKey, &c.Avatar)
+		err := rows.Scan(&c.Username, &c.PublicKey, &c.Avatar, &c.Nickname)
 		if err != nil {
 			continue
 		}
