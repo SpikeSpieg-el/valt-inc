@@ -299,6 +299,7 @@ async function performLogin() {
 
 function connectWebSocket() {
     State.ws = new WebSocket(`${State.WS_URL}?user=${State.myUsername}`);
+    State.ws.onopen = () => console.log('WebSocket connected');
     State.ws.onmessage = (e) => Chat.processPacket(JSON.parse(e.data));
     State.ws.onclose = () => setTimeout(connectWebSocket, 3000);
 }
@@ -321,6 +322,10 @@ function sendEncryptedMessage(content) {
         nonce: encrypted.nonce
     };
 
+    if (!State.ws || State.ws.readyState !== WebSocket.OPEN) {
+        customAlert("Нет подключения к серверу. Попробуйте позже.");
+        return;
+    }
     State.ws.send(JSON.stringify(packet));
 
     // Сохраняем в историю и отображаем
