@@ -25,12 +25,8 @@ var (
 		ReadBufferSize:  1024 * 10,
 		WriteBufferSize: 1024 * 10,
 		CheckOrigin: func(r *http.Request) bool {
-			origin := r.Header.Get("Origin")
-			// Разрешаем запросы с обоих доменов
-			if origin == "https://spikespieg-el.github.io" || origin == "https://vault-inc.duckdns.org" {
-				return true
-			}
-			return false
+			// Разрешаем все origin для работы фронтенда
+			return true
 		},
 	}
 )
@@ -41,8 +37,10 @@ type MsgPacket struct {
 	Ciphertext string `json:"ciphertext"`
 	Nonce      string `json:"nonce"`
 	Type       string `json:"type"`
-	PublicKey  string `json:"public_key"`
-	Avatar     string `json:"avatar"`
+	PublicKey  string `json:"public_key,omitempty"`
+	Avatar     string `json:"avatar,omitempty"`
+	Nickname   string `json:"nickname,omitempty"`
+	Username   string `json:"username,omitempty"`
 }
 
 type User struct {
@@ -71,9 +69,7 @@ func getEnv(key, defaultValue string) string {
 func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin == "https://spikespieg-el.github.io" || origin == "https://vault-inc.duckdns.org" {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-		}
+		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -88,10 +84,11 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func main() {
-	// Подключение к Redis и DB (в Docker эти данные берутся из ENV)
+	// Инициализация Redis
 	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
 	rdb = redis.NewClient(&redis.Options{Addr: redisAddr})
 
+	// Инициализация БД
 	dbHost := getEnv("DB_HOST", "localhost")
 	dbPort := getEnv("DB_PORT", "5432")
 	dbUser := getEnv("DB_USER", "user")
@@ -102,9 +99,11 @@ func main() {
 	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s", dbUser, dbPass, dbHost, dbPort, dbName, dbSSLMode)
 	var err error
 	db, err = sql.Open("postgres", connStr)
-	if err != nil { log.Fatal(err) }
+	if err != nil {
+		log.Fatal("DB Connection Error:", err)
+	}
 
-	// Эндпоинты
+	// Маршруты
 	http.HandleFunc("/ws", handleConnections)
 	http.HandleFunc("/api/register", corsMiddleware(handleRegister))
 	http.HandleFunc("/api/login", corsMiddleware(handleLogin))
@@ -116,11 +115,10 @@ func main() {
 	http.HandleFunc("/api/update-profile", corsMiddleware(handleUpdateProfile))
 	http.HandleFunc("/api/history", corsMiddleware(handleHistory))
 
-	log.Println("Go Server started on :3005")
-	http.ListenAndServe(":3005", nil)
+	log.Println("🚀 Full E2EE Server started on :3005")
+	log.Fatal(http.ListenAndServe(":3005", nil))
 }
 
-// Регистрация пользователя
 func handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username            string `json:"username"`
@@ -131,67 +129,25 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		EncryptedPrivateKey string `json:"encrypted_private_key"`
 	}
 
-	log.Printf("Register request received. Method: %s", r.Method)
-
-	// Try to parse JSON body first
-	if r.Body != nil {
-		err := json.NewDecoder(r.Body).Decode(&req)
-		log.Printf("JSON decode error: %v, Username: %s", err, req.Username)
-		if err == nil && req.Username != "" {
-			// JSON body provided
-			username := req.Username
-			password := req.Password
-			pubKey := req.PubKey
-			avatar := req.Avatar
-			nickname := req.Nickname
-
-			log.Printf("Registering user: %s, avatar length: %d", username, len(avatar))
-
-			hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-			if err != nil {
-				log.Printf("Error hashing password: %v", err)
-				http.Error(w, "Error hashing password", http.StatusInternalServerError)
-				return
-			}
-
-			uniqueKey := generateUniqueKey()
-
-			_, err = db.Exec("INSERT INTO users (username, password_hash, public_key, avatar, unique_user_key, nickname, encrypted_private_key) VALUES ($1, $2, $3, $4, $5, $6, $7)", username, hash, pubKey, avatar, uniqueKey, nickname, req.EncryptedPrivateKey)
-			if err != nil {
-				log.Printf("Error inserting user: %v", err)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusConflict)
-				json.NewEncoder(w).Encode(map[string]string{"error": "User already exists"})
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"unique_key": uniqueKey})
-			return
-		}
-	}
-
-	// Fallback to query parameters for backward compatibility
-	username := r.URL.Query().Get("user")
-	pubKey := r.URL.Query().Get("pubkey")
-	avatar := r.URL.Query().Get("avatar")
-	password := r.URL.Query().Get("password")
-
-	log.Printf("Fallback to query params: %s", username)
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		log.Printf("Error hashing password: %v", err)
-		http.Error(w, "Error hashing password", http.StatusInternalServerError)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
+	log.Printf("📝 New registration: %s", req.Username)
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	uniqueKey := generateUniqueKey()
 
-	_, err = db.Exec("INSERT INTO users (username, password_hash, public_key, avatar, unique_user_key, nickname, encrypted_private_key) VALUES ($1, $2, $3, $4, $5, $6, $7)", username, hash, pubKey, avatar, uniqueKey, "", "")
+	_, err := db.Exec(`INSERT INTO users (username, password_hash, public_key, avatar, unique_user_key, nickname, encrypted_private_key) 
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`, 
+		req.Username, string(hash), req.PubKey, req.Avatar, uniqueKey, req.Nickname, req.EncryptedPrivateKey)
+
 	if err != nil {
-		log.Printf("Error inserting user: %v", err)
-		http.Error(w, "Error registering user", http.StatusInternalServerError)
+		log.Printf("❌ Register error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "User already exists"})
 		return
 	}
 
@@ -199,266 +155,198 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"unique_key": uniqueKey})
 }
 
-// Вход пользователя
 func handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-
-	// Try to parse JSON body first
-	if r.Body != nil {
-		err := json.NewDecoder(r.Body).Decode(&req)
-		if err == nil && req.Username != "" {
-			// JSON body provided
-			username := req.Username
-			password := req.Password
-
-			var storedHash string
-			err := db.QueryRow("SELECT password_hash FROM users WHERE username = $1", username).Scan(&storedHash)
-			if err != nil {
-				http.Error(w, "User not found", http.StatusNotFound)
-				return
-			}
-
-			err = bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password))
-			if err != nil {
-				http.Error(w, "Invalid password", http.StatusUnauthorized)
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-			return
-		}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
 	}
 
-	// Fallback to query parameters for backward compatibility
-	username := r.URL.Query().Get("user")
-	password := r.URL.Query().Get("password")
+	log.Printf("🔑 Login attempt: %s", req.Username)
 
 	var storedHash string
-	err := db.QueryRow("SELECT password_hash FROM users WHERE username = $1", username).Scan(&storedHash)
+	err := db.QueryRow("SELECT password_hash FROM users WHERE username = $1", req.Username).Scan(&storedHash)
 	if err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password))
-	if err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(req.Password)); err != nil {
 		http.Error(w, "Invalid password", http.StatusUnauthorized)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// Добавление контакта
+func handleGetUser(w http.ResponseWriter, r *http.Request) {
+	username := r.URL.Query().Get("user")
+	var u User
+	// Используем COALESCE для всех полей, которые могут быть NULL
+	err := db.QueryRow(`
+		SELECT username, public_key, COALESCE(avatar, ''), unique_user_key, 
+		       COALESCE(nickname, ''), COALESCE(encrypted_private_key, '') 
+		FROM users WHERE username = $1`, username).Scan(
+		&u.Username, &u.PublicKey, &u.Avatar, &u.UniqueKey, &u.Nickname, &u.EncryptedPrivateKey)
+	
+	if err != nil {
+		log.Printf("❌ User data not found: %s", username)
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(u)
+}
+
+func handleSearchUser(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+	var u User
+	err := db.QueryRow(`
+		SELECT username, public_key, COALESCE(avatar, ''), unique_user_key, COALESCE(nickname, '') 
+		FROM users WHERE unique_user_key = $1`, key).Scan(
+		&u.Username, &u.PublicKey, &u.Avatar, &u.UniqueKey, &u.Nickname)
+	
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(u)
+}
+
 func handleAddContact(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UserUsername      string `json:"user_username"`
-		ContactUsername   string `json:"contact_username"`
-		ContactPublicKey  string `json:"contact_public_key"`
-		ContactAvatar     string `json:"contact_avatar"`
+		UserUsername     string `json:"user_username"`
+		ContactUsername  string `json:"contact_username"`
+		ContactPublicKey string `json:"contact_public_key"`
+		ContactAvatar    string `json:"contact_avatar"`
 	}
-
-	if r.Body != nil {
-		err := json.NewDecoder(r.Body).Decode(&req)
-		if err != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
-			return
-		}
-	}
-
-	_, err := db.Exec("INSERT INTO contacts (user_username, contact_username, contact_public_key, contact_avatar) VALUES ($1, $2, $3, $4) ON CONFLICT (user_username, contact_username) DO UPDATE SET contact_public_key = $3, contact_avatar = $4",
-		req.UserUsername, req.ContactUsername, req.ContactPublicKey, req.ContactAvatar)
-	if err != nil {
-		http.Error(w, "Error adding contact", http.StatusInternalServerError)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Bad JSON", http.StatusBadRequest)
 		return
 	}
 
-	// Создаём обратный контакт (B→A), чтобы добавленный пользователь тоже видел контакт
-	var userPubKey, userAvatar, userNickname string
-	err = db.QueryRow("SELECT public_key, avatar, nickname FROM users WHERE username = $1", req.UserUsername).Scan(&userPubKey, &userAvatar, &userNickname)
-	if err == nil {
-		db.Exec("INSERT INTO contacts (user_username, contact_username, contact_public_key, contact_avatar) VALUES ($1, $2, $3, $4) ON CONFLICT (user_username, contact_username) DO UPDATE SET contact_public_key = $3, contact_avatar = $4",
-			req.ContactUsername, req.UserUsername, userPubKey, userAvatar)
+	log.Printf("🤝 Adding contact: %s <-> %s", req.UserUsername, req.ContactUsername)
 
-		// Уведомляем добавленного пользователя через Redis
-		notification := map[string]interface{}{
-			"type":       "contact_added",
-			"from":       req.UserUsername,
-			"public_key": userPubKey,
-			"avatar":     userAvatar,
-			"nickname":   userNickname,
-		}
-		notifBytes, _ := json.Marshal(notification)
-		rdb.Publish(ctx, "user:"+req.ContactUsername, string(notifBytes))
+	// 1. Добавляем контакт тому, кто инициировал поиск
+	_, err := db.Exec(`INSERT INTO contacts (user_username, contact_username, contact_public_key, contact_avatar) 
+		VALUES ($1, $2, $3, $4) ON CONFLICT (user_username, contact_username) 
+		DO UPDATE SET contact_public_key = $3, contact_avatar = $4`,
+		req.UserUsername, req.ContactUsername, req.ContactPublicKey, req.ContactAvatar)
+
+	// 2. Автоматически добавляем обратный контакт второму пользователю
+	var aPubKey, aAvatar, aNickname string
+	err = db.QueryRow(`SELECT public_key, COALESCE(avatar, ''), COALESCE(nickname, '') 
+	                    FROM users WHERE username = $1`, req.UserUsername).Scan(&aPubKey, &aAvatar, &aNickname)
+	
+	if err == nil {
+		db.Exec(`INSERT INTO contacts (user_username, contact_username, contact_public_key, contact_avatar) 
+			VALUES ($1, $2, $3, $4) ON CONFLICT (user_username, contact_username) 
+			DO UPDATE SET contact_public_key = $3, contact_avatar = $4`,
+			req.ContactUsername, req.UserUsername, aPubKey, aAvatar)
+
+		// Уведомляем друга по WebSocket, что его добавили
+		notif, _ := json.Marshal(MsgPacket{
+			Type:      "contact_added",
+			From:      req.UserUsername,
+			PublicKey: aPubKey,
+			Avatar:    aAvatar,
+			Nickname:  aNickname,
+		})
+		rdb.Publish(ctx, "user:"+req.ContactUsername, string(notif))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// Обновление профиля (ник и аватар)
+func handleContacts(w http.ResponseWriter, r *http.Request) {
+	username := r.URL.Query().Get("user")
+	rows, err := db.Query(`
+		SELECT c.contact_username, c.contact_public_key, COALESCE(u.avatar, ''), COALESCE(u.nickname, '') 
+		FROM contacts c JOIN users u ON c.contact_username = u.username 
+		WHERE c.user_username = $1`, username)
+	
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]interface{}{})
+		return
+	}
+	defer rows.Close()
+
+	contacts := make([]MsgPacket, 0) // Инициализируем пустым списком []
+	for rows.Next() {
+		var c MsgPacket
+		if err := rows.Scan(&c.Username, &c.PublicKey, &c.Avatar, &c.Nickname); err == nil {
+			contacts = append(contacts, c)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(contacts)
+}
+
 func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
 		Nickname string `json:"nickname"`
 		Avatar   string `json:"avatar"`
 	}
+	json.NewDecoder(r.Body).Decode(&req)
 
-	if r.Body != nil {
-		err := json.NewDecoder(r.Body).Decode(&req)
-		if err != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
-			return
-		}
-	}
-
-	_, err := db.Exec("UPDATE users SET nickname = $1, avatar = $2 WHERE username = $3", req.Nickname, req.Avatar, req.Username)
-	if err != nil {
-		http.Error(w, "Error updating profile", http.StatusInternalServerError)
-		return
-	}
-
-	// Обновляем аватар во всех контактах, где этот пользователь является контактом
+	log.Printf("👤 Profile update: %s", req.Username)
+	db.Exec("UPDATE users SET nickname = $1, avatar = $2 WHERE username = $3", req.Nickname, req.Avatar, req.Username)
 	db.Exec("UPDATE contacts SET contact_avatar = $1 WHERE contact_username = $2", req.Avatar, req.Username)
 
-	// Уведомляем всех, у кого этот пользователь в контактах, об обновлении профиля
+	// Уведомляем друзей об обновлении
 	rows, _ := db.Query("SELECT user_username FROM contacts WHERE contact_username = $1", req.Username)
 	defer rows.Close()
 	for rows.Next() {
-		var contactOwner string
-		rows.Scan(&contactOwner)
-		notification := map[string]interface{}{
-			"type":     "profile_updated",
-			"username": req.Username,
-			"nickname": req.Nickname,
-			"avatar":   req.Avatar,
-		}
-		notifBytes, _ := json.Marshal(notification)
-		rdb.Publish(ctx, "user:"+contactOwner, string(notifBytes))
+		var friend string
+		rows.Scan(&friend)
+		notif, _ := json.Marshal(map[string]interface{}{
+			"type": "profile_updated", "username": req.Username, "nickname": req.Nickname, "avatar": req.Avatar,
+		})
+		rdb.Publish(ctx, "user:"+friend, string(notif))
 	}
-
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// Получение информации о пользователе по логину
-func handleGetUser(w http.ResponseWriter, r *http.Request) {
-	username := r.URL.Query().Get("user")
-
-	var user User
-	err := db.QueryRow("SELECT username, public_key, avatar, unique_user_key, nickname, encrypted_private_key FROM users WHERE username = $1", username).Scan(&user.Username, &user.PublicKey, &user.Avatar, &user.UniqueKey, &user.Nickname, &user.EncryptedPrivateKey)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(user)
-}
-
-// Поиск пользователя по уникальному ключу
-func handleSearchUser(w http.ResponseWriter, r *http.Request) {
-	uniqueKey := r.URL.Query().Get("key")
-
-	var user User
-	err := db.QueryRow("SELECT username, public_key, avatar, unique_user_key, nickname FROM users WHERE unique_user_key = $1", uniqueKey).Scan(&user.Username, &user.PublicKey, &user.Avatar, &user.UniqueKey, &user.Nickname)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(user)
-}
-
-// Получение контактов пользователя
-func handleContacts(w http.ResponseWriter, r *http.Request) {
-	username := r.URL.Query().Get("user")
-
-	rows, err := db.Query(`
-		SELECT c.contact_username, c.contact_public_key, u.avatar, u.nickname 
-		FROM contacts c 
-		LEFT JOIN users u ON c.contact_username = u.username 
-		WHERE c.user_username = $1
-	`, username)
-	if err != nil {
-		http.Error(w, "Error fetching contacts", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	type Contact struct {
-		Username  string `json:"username"`
-		PublicKey string `json:"public_key"`
-		Avatar    string `json:"avatar"`
-		Nickname  string `json:"nickname"`
-	}
-
-	var contacts []Contact
-	for rows.Next() {
-		var c Contact
-		err := rows.Scan(&c.Username, &c.PublicKey, &c.Avatar, &c.Nickname)
-		if err != nil {
-			continue
-		}
-		contacts = append(contacts, c)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(contacts)
-}
-
-// Получение и удаление офлайн-сообщений
 func handleOfflineMessages(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("user")
-
-	type OfflineMessage struct {
-		From       string `json:"from"`
-		Ciphertext string `json:"ciphertext"`
-		Nonce      string `json:"nonce"`
-	}
-
 	rows, err := db.Query("SELECT from_user, ciphertext, nonce FROM offline_messages WHERE to_user = $1", username)
 	if err != nil {
-		http.Error(w, "Error fetching offline messages", http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]interface{}{})
 		return
 	}
 	defer rows.Close()
 
-	var messages []OfflineMessage
+	msgs := make([]MsgPacket, 0)
 	for rows.Next() {
-		var msg OfflineMessage
-		err := rows.Scan(&msg.From, &msg.Ciphertext, &msg.Nonce)
-		if err != nil {
-			continue
+		var m MsgPacket
+		if err := rows.Scan(&m.From, &m.Ciphertext, &m.Nonce); err == nil {
+			msgs = append(msgs, m)
 		}
-		messages = append(messages, msg)
 	}
-
-	// Удаляем доставленные сообщения
-	_, err = db.Exec("DELETE FROM offline_messages WHERE to_user = $1", username)
-	if err != nil {
-		log.Printf("Error deleting offline messages: %v", err)
-	}
-
+	// Очищаем доставленное
+	db.Exec("DELETE FROM offline_messages WHERE to_user = $1", username)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(messages)
+	json.NewEncoder(w).Encode(msgs)
 }
 
-// Получение истории сообщений
 func handleHistory(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("user")
+	log.Printf("📜 Fetching history: %s", username)
 
-	rows, err := db.Query("SELECT from_user, to_user, ciphertext, nonce FROM messages_history WHERE from_user = $1 OR to_user = $1 ORDER BY created_at ASC", username)
+	rows, err := db.Query(`SELECT from_user, to_user, ciphertext, nonce 
+		FROM messages_history WHERE from_user = $1 OR to_user = $1 
+		ORDER BY created_at ASC`, username)
+	
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode([]MsgPacket{})
@@ -466,78 +354,62 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var msgs []MsgPacket
+	msgs := make([]MsgPacket, 0)
 	for rows.Next() {
 		var m MsgPacket
-		rows.Scan(&m.From, &m.To, &m.Ciphertext, &m.Nonce)
-		msgs = append(msgs, m)
+		if err := rows.Scan(&m.From, &m.To, &m.Ciphertext, &m.Nonce); err == nil {
+			msgs = append(msgs, m)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if msgs == nil {
-		json.NewEncoder(w).Encode([]MsgPacket{})
-	} else {
-		json.NewEncoder(w).Encode(msgs)
-	}
+	json.NewEncoder(w).Encode(msgs)
 }
 
-// Обработка WebSocket
 func handleConnections(w http.ResponseWriter, r *http.Request) {
 	user := r.URL.Query().Get("user")
-	if user == "" {
-		log.Println("WS Error: No user provided in query")
-		return
-	}
-
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("Upgrade error for user %s: %v", user, err)
+		log.Printf("WS error: %v", err)
 		return
 	}
-	log.Printf("User connected via WS: %s", user)
 	defer ws.Close()
 
-	// Подписываемся на канал этого пользователя в Redis
+	log.Printf("🔌 WS connected: %s", user)
+
 	pubsub := rdb.Subscribe(ctx, "user:"+user)
 	defer pubsub.Close()
-	ch := pubsub.Channel()
 
-	// Горутина для чтения из Redis и отправки в WebSocket
+	// Чтение из Redis -> Отправка в WS
 	go func() {
-		for msg := range ch {
+		for msg := range pubsub.Channel() {
 			ws.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
 		}
 	}()
 
-	// Чтение входящих сообщений из WebSocket
+	// Чтение из WS -> Рассылка в Redis
 	for {
 		_, msg, err := ws.ReadMessage()
 		if err != nil { break }
 
-		var packet MsgPacket
-		json.Unmarshal(msg, &packet)
+		var p MsgPacket
+		if err := json.Unmarshal(msg, &p); err != nil { continue }
 
-		// Для contact_added уведомлений отправляем на целевого пользователя
-		if packet.Type == "contact_added" && packet.To != "" {
-			packetBytes, _ := json.Marshal(packet)
-			rdb.Publish(ctx, "user:"+packet.To, string(packetBytes))
-			continue
-		}
+		pBytes, _ := json.Marshal(p)
+		
+		// Пытаемся доставить онлайн
+		receivers, _ := rdb.Publish(ctx, "user:"+p.To, string(pBytes)).Result()
 
-		// Отправляем сообщение в Redis-канал получателя
-		packetBytes, _ := json.Marshal(packet)
-		receivers, _ := rdb.Publish(ctx, "user:"+packet.To, string(packetBytes)).Result()
-
-		// Сохраняем в общую историю ВСЕГДА
-		if packet.Ciphertext != "" {
+		// Сохраняем в историю (всегда)
+		if p.Ciphertext != "" {
 			db.Exec("INSERT INTO messages_history (from_user, to_user, ciphertext, nonce) VALUES ($1, $2, $3, $4)",
-				packet.From, packet.To, packet.Ciphertext, packet.Nonce)
+				p.From, p.To, p.Ciphertext, p.Nonce)
 		}
 
-		// Если получатель не в сети (никто не слушает канал в Redis), сохраняем в БД
-		if receivers == 0 && packet.Ciphertext != "" {
+		// Если получатель оффлайн (никто не слушает Redis), кладем в оффлайн-таблицу
+		if receivers == 0 && p.Ciphertext != "" {
 			db.Exec("INSERT INTO offline_messages (from_user, to_user, ciphertext, nonce) VALUES ($1, $2, $3, $4)",
-				packet.From, packet.To, packet.Ciphertext, packet.Nonce)
+				p.From, p.To, p.Ciphertext, p.Nonce)
 		}
 	}
 }
