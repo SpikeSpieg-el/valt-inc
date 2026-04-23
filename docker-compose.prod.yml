@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: valt-postgres-prod
+    environment:
+      POSTGRES_USER: ${DB_USER:-valtuser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-valtpass}
+      POSTGRES_DB: ${DB_NAME:-messenger}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data-prod:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-valtuser} -d ${DB_NAME:-messenger}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: valt-redis-prod
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data-prod:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: valt-app-prod
+    ports:
+      - "3005:8080"
+    environment:
+      - REDIS_ADDR=${REDIS_ADDR:-redis:6379}
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-valtuser}
+      - DB_PASSWORD=${DB_PASSWORD:-valtpass}
+      - DB_NAME=${DB_NAME:-messenger}
+      - DB_SSLMODE=${DB_SSLMODE:-disable}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data-prod:
+  redis-data-prod:

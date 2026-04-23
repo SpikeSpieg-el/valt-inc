@@ -1,0 +1,23 @@
+# Environment variables
+.env
+.env.local
+
+# Docker volumes
+postgres-data
+postgres-data-dev
+postgres-data-prod
+redis-data-prod
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.sum
+
+# OS
+.DS_Store
+Thumbs.db
