@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
     unique_user_key VARCHAR(255) UNIQUE NOT NULL,
     nickname VARCHAR(255),
     encrypted_private_key TEXT,
+    connection_code VARCHAR(8) UNIQUE NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

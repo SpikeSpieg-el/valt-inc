@@ -6,7 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
-	"encoding/hex"
+
 	"encoding/json"
 	"fmt"
 	"log"
@@ -478,6 +478,7 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			typingNotif, _ := json.Marshal(map[string]interface{}{
 				"type": "typing",
 				"from": p.From,
+				"is_typing": true,
 			})
 			rdb.Publish(ctx, "user:"+p.To, string(typingNotif))
 			continue
